@@ -56,6 +56,10 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("function parseLibraryText", js)
         self.assertIn("function resolvedGames", js)
         self.assertIn("function libraryFilePath", js)
+        self.assertIn("function homeShelf", js)
+        self.assertIn("function sourceBadges", js)
+        self.assertIn("homeRow", qml)
+        self.assertIn("focusZone", qml)
 
     def test_service_logs_and_starts_arcaded_via_python(self):
         qml = (ROOT / "Service.qml").read_text(encoding="utf-8")

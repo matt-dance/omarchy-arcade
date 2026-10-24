@@ -104,6 +104,30 @@ def _manifest_installed(manifest: dict) -> bool:
     return bool(flags & 4)
 
 
+def _hero_for(root: Path, appid: int) -> str | None:
+    cache = root / "appcache" / "librarycache"
+    for name in (
+        f"{appid}/library_hero.jpg",
+        f"{appid}/library_hero.png",
+        f"{appid}/library_hero_2x.jpg",
+        f"{appid}_library_hero.jpg",
+        f"{appid}_library_hero.png",
+    ):
+        p = cache / name
+        if p.is_file():
+            return p.as_uri()
+    userdata = root / "userdata"
+    if userdata.is_dir():
+        for user in userdata.iterdir():
+            if not user.is_dir() or not user.name.isdigit():
+                continue
+            for ext in ("_hero.jpg", "_hero.png"):
+                g = user / "config" / "grid" / f"{appid}{ext}"
+                if g.is_file():
+                    return g.as_uri()
+    return None
+
+
 def _cover_for(root: Path, appid: int) -> str | None:
     cache = root / "appcache" / "librarycache"
     # Newer Steam: per-app folder
@@ -203,6 +227,7 @@ def _scan_manifests(root: Path, playtimes: dict) -> list[Game]:
                 continue
             minutes, last = playtimes.get(appid, (None, None))
             cover = _cover_for(root, appid)
+            hero = _hero_for(root, appid)
             games.append(
                 Game(
                     id=f"steam:{appid}",
@@ -219,7 +244,7 @@ def _scan_manifests(root: Path, playtimes: dict) -> list[Game]:
                         steam_app_id=appid,
                         handoff=True,
                     ),
-                    art=ArtSpec(cover=cover),
+                    art=ArtSpec(cover=cover, hero=hero),
                     dedupe_keys=[f"steam:{appid}", f"title:{normalize_title(name)}"],
                 )
             )

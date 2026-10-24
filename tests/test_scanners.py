@@ -37,6 +37,22 @@ class TestSteamScanner(unittest.TestCase):
         self.assertFalse(any("Steam Linux Runtime" in (g.title or "") for g in games))
         self.assertFalse(any((g.title or "").startswith("Proton ") for g in games))
 
+    def test_local_hero_and_cover(self):
+        root = FIXTURES / "steam"
+        cache = root / "appcache" / "librarycache" / "1245620"
+        cache.mkdir(parents=True, exist_ok=True)
+        cover = cache / "library_600x900.jpg"
+        hero = cache / "library_hero.jpg"
+        cover.write_bytes(b"cover")
+        hero.write_bytes(b"hero")
+        with mock.patch("arcade.scanners.steam.steam_roots", return_value=[root]):
+            games, errors = steam.scan()
+        self.assertEqual(errors, [])
+        elden = next(g for g in games if g.id == "steam:1245620")
+        self.assertTrue(elden.art.cover)
+        self.assertTrue(elden.art.hero)
+        self.assertIn("library_hero", elden.art.hero)
+
 
 class TestDesktopScanner(unittest.TestCase):
     def test_gfn_and_native_skip_steam_launcher(self):

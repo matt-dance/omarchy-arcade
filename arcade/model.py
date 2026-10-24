@@ -225,6 +225,14 @@ def merge_games(games: list[Game]) -> list[Game]:
         if source_rank.get(game.source, 99) < source_rank.get(primary.source, 99):
             if primary.source != game.source and not _has_also_on(game.also_on, primary.id):
                 game.also_on = [*game.also_on, also_on_payload(primary)]
+            if not game.art.cover and primary.art.cover:
+                game.art.cover = primary.art.cover
+            if not game.art.hero and primary.art.hero:
+                game.art.hero = primary.art.hero
+            if game.playtime_minutes is None and primary.playtime_minutes is not None:
+                game.playtime_minutes = primary.playtime_minutes
+            if not game.last_played and primary.last_played:
+                game.last_played = primary.last_played
             for key in game.dedupe_keys:
                 by_key[key] = game
             # Replace order entry
@@ -238,6 +246,8 @@ def merge_games(games: list[Game]) -> list[Game]:
             # Absorb art / playtime when missing
             if not primary.art.cover and game.art.cover:
                 primary.art.cover = game.art.cover
+            if not primary.art.hero and game.art.hero:
+                primary.art.hero = game.art.hero
             if primary.playtime_minutes is None and game.playtime_minutes is not None:
                 primary.playtime_minutes = game.playtime_minutes
             if not primary.last_played and game.last_played:

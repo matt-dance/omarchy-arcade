@@ -29,8 +29,11 @@ def _sgdb_key(cfg) -> str | None:
     return None
 
 
-def _fetch_sgdb(appid: int, key: str, dest: Path) -> str | None:
-    url = f"https://www.steamgriddb.com/api/v2/grids/steam/{appid}?dimensions=600x900&types=static"
+def _fetch_sgdb(kind: str, appid: int, key: str, dest: Path, dimensions: str) -> str | None:
+    url = (
+        f"https://www.steamgriddb.com/api/v2/{kind}/steam/{appid}"
+        f"?dimensions={dimensions}&types=static"
+    )
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -71,18 +74,26 @@ def main(argv: list[str] | None = None) -> int:
     for game in data.get("games") or []:
         if args.ids and game["id"] not in args.ids:
             continue
-        art = game.get("art") or {}
-        if art.get("cover"):
-            continue
+        art = game.setdefault("art", {})
         appid = game.get("steamAppId")
         if not appid or not key:
             continue
-        dest = arcade_cache_dir() / "art" / game["id"].replace(":", "_") / "cover.jpg"
-        uri = _fetch_sgdb(int(appid), key, dest)
-        if uri:
-            game.setdefault("art", {})["cover"] = uri
-            updated += 1
-            results.append({"id": game["id"], "cover": uri})
+        dest_dir = arcade_cache_dir() / "art" / game["id"].replace(":", "_")
+        changed = {}
+        if not art.get("cover"):
+            uri = _fetch_sgdb("grids", int(appid), key, dest_dir / "cover.jpg", "600x900")
+            if uri:
+                art["cover"] = uri
+                changed["cover"] = uri
+                updated += 1
+        if not art.get("hero"):
+            uri = _fetch_sgdb("heroes", int(appid), key, dest_dir / "hero.jpg", "1920x620")
+            if uri:
+                art["hero"] = uri
+                changed["hero"] = uri
+                updated += 1
+        if changed:
+            results.append({"id": game["id"], **changed})
         if updated >= args.limit:
             break
     if updated:

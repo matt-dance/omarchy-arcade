@@ -227,6 +227,12 @@ Item {
     root.refreshIdleInhibit()
   }
 
+  function tapKeys(keys) {
+    if (!keys)
+      return
+    root.sendDaemon({ t: "keys", keys: String(keys) })
+  }
+
   function sendDaemon(obj) {
     if (!daemon.running)
       root.startDaemon()

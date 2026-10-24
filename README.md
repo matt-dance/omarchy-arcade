@@ -58,13 +58,13 @@ omarchy plugin remove matt-dance.arcade
 ## Usage
 
 - **Open:** `Super + Ctrl + G`, Gaming › Arcade, or `Guide + Start` on a controller
-- **Browse:** D-pad / left stick / arrow keys / `hjkl`
-- **Play:** `A` / Enter
+- **Home:** horizontal row of larger covers (recently played first, then the rest of the library). The focused card scales up. The details pane below shows hero/banner art, title, source badges including merged **Play on…** stores, last played or playtime, and **Play** / **Options**
+- **Browse Home:** D-pad left/right along the row, down into Play/Options, up back to the row. `A` plays, `X` opens Options (Play on… picker)
+- **Library:** `LB` / `RB` / Tab keeps the grid
 - **Search:** `Y` / `/` then type
-- **Home ↔ Library:** `LB` / `RB` / Tab
 - **Settings:** `Start` / `M`
-- **Close Arcade:** `B` / Esc from Home
-- **While a game runs:** tap `Guide` for the Quick Menu (resume, volume, screenshot, close game, back to Arcade)
+- **Close Arcade:** `B` / Esc from the Home row
+- **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
 
 ### Rescan
 
@@ -136,7 +136,7 @@ echo 'YOUR_API_KEY' > ~/.config/omarchy/arcade/steamgriddb.key
 omarchy-shell shell call matt-dance.arcade rescan '{}'
 ```
 
-Without a key, Arcade uses local launcher art and themed typographic cards.
+Without a key, Arcade uses local launcher art (Steam `library_hero` when present) and themed typographic cards. Home prefers SteamGridDB hero art, then the Steam library hero, then a dimmed cover.
 
 ## Optional ROM scan
 
@@ -160,7 +160,8 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ├── ArcadeModel.js
 ├── bin/arcaded            # Python stdlib daemon (evdev + session)
 ├── bin/arcade-scan        # One-shot library scan
-├── bin/arcade-art         # Optional SteamGridDB fetch
+├── bin/arcade-art         # Optional SteamGridDB cover + hero fetch
+├── bin/arcade-sys         # System menu probes/actions (wpctl, nmcli, …)
 ├── arcade/                # Python package
 ├── default/arcade.toml
 ├── extensions/omarchy-menu.jsonc
@@ -182,6 +183,7 @@ python3 -m unittest discover -s tests -v
 ./tests/run.sh
 
 python3 bin/arcade-scan --json
+python3 bin/arcade-sys items
 printf '{"t":"ping"}\n' | python3 bin/arcaded --plugin-dir .   # Ctrl+D to exit
 ```
 
@@ -199,15 +201,16 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 1. **Plugin load** — `omarchy plugin validate` and enable; bar stays healthy; journal shows `service loaded` and `starting arcaded`
 2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live
 3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
-4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search
-5. **Controller nav** — D-pad and stick move focus; A launches; B backs
+4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
+5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
-7. **Guide tap** — opens Quick Menu over a running game; B resumes
-8. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
-9. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
-10. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
-11. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`
-12. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+7. **Guide tap** — opens the system menu over a running game; B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out
+8. **System menu tools** — volume/mute/output (wpctl / omarchy-audio-*), brightness, night light, Bluetooth scan/pair, Wi-Fi picker, MangoHud, power profile, screenshot/record, do-not-disturb; missing tools stay hidden; battery shown for the machine and pads when sysfs exposes it
+9. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
+10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
+11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
+12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`
+13. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
 

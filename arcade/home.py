@@ -1,0 +1,179 @@
+"""Home shelf, badges, and playtime helpers (mirrors ArcadeModel.js)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+SOURCE_LABELS = {
+    "steam": "Steam",
+    "heroic": "Heroic",
+    "legendary": "Legendary",
+    "lutris": "Lutris",
+    "bottles": "Bottles",
+    "itch": "itch.io",
+    "gfn": "GeForce NOW",
+    "desktop": "Desktop",
+    "webapp": "Cloud",
+    "retroarch": "RetroArch",
+    "roms": "ROMs",
+    "moonlight": "Moonlight",
+    "gog": "GOG",
+    "epic": "Epic",
+    "amazon": "Amazon",
+}
+
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def source_label(source: str | None) -> str:
+    if not source:
+        return ""
+    return SOURCE_LABELS.get(str(source).casefold(), str(source))
+
+
+def home_shelf(games: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Recently played first (newest), then the rest of the library by title."""
+    items = list(games or [])
+    played = [g for g in items if g.get("lastPlayed")]
+    rest = [g for g in items if not g.get("lastPlayed")]
+    played.sort(key=lambda g: str(g.get("sortTitle") or g.get("title") or "").casefold())
+    played.sort(key=lambda g: str(g.get("lastPlayed") or ""), reverse=True)
+    rest.sort(key=lambda g: str(g.get("sortTitle") or g.get("title") or "").casefold())
+    return played + rest
+
+
+def play_on_choices(game: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not game:
+        return []
+    out = [
+        {
+            "id": game.get("id"),
+            "source": game.get("source"),
+            "store": game.get("store"),
+            "title": game.get("title"),
+            "launch": game.get("launch"),
+            "track": game.get("track"),
+            "label": source_label(game.get("source")),
+        }
+    ]
+    for extra in game.get("alsoOn") or []:
+        if not extra or isinstance(extra, str):
+            continue
+        out.append(
+            {
+                "id": extra.get("id") or game.get("id"),
+                "source": extra.get("source") or "",
+                "store": extra.get("store"),
+                "title": extra.get("title") or game.get("title"),
+                "launch": extra.get("launch"),
+                "track": extra.get("track"),
+                "label": source_label(extra.get("source")),
+            }
+        )
+    return out
+
+
+def source_badges(game: dict[str, Any] | None) -> list[str]:
+    """Primary source, store, and merged Play on… sources."""
+    if not game:
+        return []
+    badges: list[str] = []
+    seen: set[str] = set()
+
+    def add(label: str) -> None:
+        if not label or label in seen:
+            return
+        seen.add(label)
+        badges.append(label)
+
+    add(source_label(game.get("source")))
+    store = game.get("store")
+    if store:
+        add(source_label(store))
+    for extra in game.get("alsoOn") or []:
+        if not extra or isinstance(extra, str):
+            continue
+        label = source_label(extra.get("source"))
+        if label and label not in seen:
+            add(f"Play on {label}")
+    return badges
+
+
+def format_playtime(minutes: Any) -> str:
+    if minutes is None or minutes == "":
+        return ""
+    try:
+        n = float(minutes)
+    except (TypeError, ValueError):
+        return ""
+    if n < 0:
+        return ""
+    if n < 60:
+        return f"{int(round(n))} min"
+    hours = n / 60.0
+    if hours < 10:
+        return f"{round(hours, 1):g} h"
+    return f"{int(round(hours))} h"
+
+
+def format_last_played(iso: str | None) -> str:
+    if not iso:
+        return ""
+    day = str(iso)[:10]
+    if len(day) < 10 or day[4] != "-" or day[7] != "-":
+        return str(iso)
+    try:
+        year = day[0:4]
+        month = int(day[5:7])
+        d = int(day[8:10])
+    except ValueError:
+        return day
+    if month < 1 or month > 12 or d < 1:
+        return day
+    return f"{_MONTHS[month - 1]} {d}, {year}"
+
+
+def play_meta(game: dict[str, Any] | None) -> str:
+    if not game:
+        return ""
+    last = game.get("lastPlayed")
+    if last:
+        pretty = format_last_played(str(last))
+        return f"Last played {pretty}" if pretty else ""
+    minutes = game.get("playtimeMinutes")
+    if minutes is not None and minutes != "":
+        pretty = format_playtime(minutes)
+        return f"{pretty} played" if pretty else ""
+    return ""
+
+
+def hero_url(game: dict[str, Any] | None) -> str:
+    if not game:
+        return ""
+    art = game.get("art") or {}
+    if isinstance(art, dict) and art.get("hero"):
+        return str(art["hero"])
+    return ""
+
+
+def cover_url(game: dict[str, Any] | None) -> str:
+    if not game:
+        return ""
+    art = game.get("art") or {}
+    if isinstance(art, dict) and art.get("cover"):
+        return str(art["cover"])
+    return ""

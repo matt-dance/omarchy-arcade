@@ -232,6 +232,13 @@ class ArcadeDaemon:
                 self.tracker.clear()
         elif typ == "ping":
             emit({"t": "pong"})
+        elif typ == "keys":
+            combo = str(msg.get("keys") or "")
+            try:
+                self.keyboard.tap_combo(combo)
+                emit({"t": "action", "name": "keys", "keys": combo, "reason": "service"})
+            except Exception as exc:  # noqa: BLE001
+                emit({"t": "error", "error": f"keys: {exc}"})
         else:
             emit({"t": "error", "error": f"unknown type {typ!r}"})
 

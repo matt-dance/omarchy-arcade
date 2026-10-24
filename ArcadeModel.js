@@ -55,9 +55,13 @@ function sourceLabel(source) {
     webapp: "Cloud",
     retroarch: "RetroArch",
     roms: "ROMs",
-    moonlight: "Moonlight"
+    moonlight: "Moonlight",
+    gog: "GOG",
+    epic: "Epic",
+    amazon: "Amazon"
   }
-  return map[source] || source || ""
+  var key = String(source || "").toLowerCase()
+  return map[key] || source || ""
 }
 
 function runnerBadge(runner) {
@@ -80,6 +84,102 @@ function filterGames(games, query) {
       out.push(g)
   }
   return out
+}
+
+function homeShelf(games) {
+  var items = (games || []).slice()
+  var played = []
+  var rest = []
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].lastPlayed)
+      played.push(items[i])
+    else
+      rest.push(items[i])
+  }
+  function byTitle(a, b) {
+    return String(a.sortTitle || a.title || "").localeCompare(String(b.sortTitle || b.title || ""))
+  }
+  played.sort(byTitle)
+  played.sort(function(a, b) {
+    var la = a.lastPlayed || ""
+    var lb = b.lastPlayed || ""
+    if (la === lb) return 0
+    return la < lb ? 1 : -1
+  })
+  rest.sort(byTitle)
+  return played.concat(rest)
+}
+
+function sourceBadges(game) {
+  if (!game) return []
+  var badges = []
+  var seen = {}
+  function add(label) {
+    if (!label || seen[label]) return
+    seen[label] = true
+    badges.push(label)
+  }
+  add(sourceLabel(game.source))
+  if (game.store)
+    add(sourceLabel(game.store))
+  var extras = game.alsoOn || []
+  for (var i = 0; i < extras.length; i++) {
+    var extra = extras[i]
+    if (!extra || typeof extra === "string")
+      continue
+    var label = sourceLabel(extra.source)
+    if (label && !seen[label])
+      add("Play on " + label)
+  }
+  return badges
+}
+
+function formatPlaytime(minutes) {
+  if (minutes === undefined || minutes === null || minutes === "")
+    return ""
+  var n = Number(minutes)
+  if (isNaN(n) || n < 0)
+    return ""
+  if (n < 60)
+    return Math.round(n) + " min"
+  var hours = n / 60
+  if (hours < 10)
+    return (Math.round(hours * 10) / 10) + " h"
+  return Math.round(hours) + " h"
+}
+
+function formatLastPlayed(iso) {
+  if (!iso) return ""
+  var day = String(iso).slice(0, 10)
+  if (day.length < 10 || day[4] !== "-" || day[7] !== "-")
+    return String(iso)
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  var month = parseInt(day.slice(5, 7), 10)
+  var d = parseInt(day.slice(8, 10), 10)
+  if (!month || month < 1 || month > 12 || !d)
+    return day
+  return months[month - 1] + " " + d + ", " + day.slice(0, 4)
+}
+
+function playMeta(game) {
+  if (!game) return ""
+  if (game.lastPlayed)
+    return "Last played " + formatLastPlayed(game.lastPlayed)
+  if (game.playtimeMinutes)
+    return formatPlaytime(game.playtimeMinutes) + " played"
+  return ""
+}
+
+function heroUrl(game) {
+  if (game && game.art && game.art.hero)
+    return game.art.hero
+  return ""
+}
+
+function coverUrl(game) {
+  if (game && game.art && game.art.cover)
+    return game.art.cover
+  return ""
 }
 
 function recentGames(games, limit) {
