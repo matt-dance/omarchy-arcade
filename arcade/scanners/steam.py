@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -15,10 +16,13 @@ _STEAM_TOOLS = {
     1070560,  # Steam Linux Runtime 1.0 (scout)
     1391110,  # Steam Linux Runtime 2.0 (soldier)
     1628350,  # Steam Linux Runtime 3.0 (sniper)
+    4183110,  # Steam Linux Runtime 4.0
+    4185400,  # Steam Linux Runtime 4.0 (arm64 companion, when present)
     1493710,  # Proton Experimental
     1887720,  # Proton 7.0
     1580130,  # Proton 6.3
     1420170,  # Proton 5.13
+    1113280,  # Proton 5.0
     961940,  # Proton 4.2
     930400,  # Proton 3.16
     858280,  # Proton 3.7
@@ -26,6 +30,11 @@ _STEAM_TOOLS = {
     2805730,  # Proton 9.0
     3658110,  # Proton 10.0
 }
+
+_PROTON_TOOL_RE = re.compile(
+    r"^proton(\s+\d|\s+experimental|\s+hotfix|\s+next|$)",
+    re.IGNORECASE,
+)
 
 
 def _library_folders(root: Path) -> list[Path]:
@@ -48,6 +57,41 @@ def _library_folders(root: Path) -> list[Path]:
         if (p / "steamapps").is_dir() and p not in folders:
             folders.append(p)
     return folders
+
+
+def _acf_type(app: dict) -> str:
+    """Best-effort Steam app type from an ACF AppState dict."""
+    for key in ("type", "Type"):
+        value = app.get(key)
+        if value:
+            return str(value).casefold()
+    user = app.get("UserConfig") or app.get("userconfig") or {}
+    if isinstance(user, dict):
+        for key in ("type", "Type"):
+            value = user.get(key)
+            if value:
+                return str(value).casefold()
+    return ""
+
+
+def _is_steam_tool(app: dict, appid: int, name: str) -> bool:
+    """Filter Proton, Steam Linux Runtime, Steamworks redistributables, etc."""
+    if appid in _STEAM_TOOLS:
+        return True
+    if _acf_type(app) in {"tool", "config"}:
+        return True
+    n = (name or "").casefold().strip()
+    if n.startswith("steam linux runtime") or n.startswith("steamworks"):
+        return True
+    if _PROTON_TOOL_RE.match(n):
+        return True
+    installdir = str(app.get("installdir") or app.get("InstallDir") or "").casefold()
+    compact = installdir.replace(" ", "").replace("_", "")
+    if "steamlinuxruntime" in compact:
+        return True
+    if compact.startswith("proton") and "protonvpn" not in compact:
+        return True
+    return False
 
 
 def _manifest_installed(manifest: dict) -> bool:
@@ -150,12 +194,12 @@ def _scan_manifests(root: Path, playtimes: dict) -> list[Game]:
                 appid = int(app.get("appid") or app.get("appID") or 0)
             except ValueError:
                 continue
-            if not appid or appid in _STEAM_TOOLS:
-                continue
-            if not _manifest_installed(app):
+            if not appid:
                 continue
             name = app.get("name") or f"Steam {appid}"
-            if name.startswith("Steamworks"):
+            if _is_steam_tool(app, appid, name):
+                continue
+            if not _manifest_installed(app):
                 continue
             minutes, last = playtimes.get(appid, (None, None))
             cover = _cover_for(root, appid)

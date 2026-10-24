@@ -19,10 +19,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Patterns such as `-- BEGIN matt-dance.arcade` start with `--`.
+file_contains() {
+  local file="$1" pat="$2"
+  [[ -f "$file" ]] && grep -Fq -- "$pat" "$file"
+}
+
 strip_block() {
   local file="$1" begin="$2" end="$3"
   [[ -f "$file" ]] || return 0
-  if ! grep -Fq "$begin" "$file"; then
+  if ! file_contains "$file" "$begin"; then
     echo "no managed block in ${file}"
     return 0
   fi
@@ -60,7 +66,11 @@ if [[ -f "$ARCADE_LUA" ]]; then
 fi
 
 if (( ! DRY_RUN )); then
-  command -v omarchy >/dev/null 2>&1 && omarchy menu refresh 2>/dev/null || true
-  command -v hyprctl >/dev/null 2>&1 && hyprctl reload 2>/dev/null || true
+  if command -v omarchy >/dev/null 2>&1; then
+    omarchy menu refresh >/dev/null 2>&1 || true
+  fi
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl reload >/dev/null 2>&1 || true
+  fi
   echo "Integration removed. Plugin files (if any) remain until: omarchy plugin remove ${PLUGIN_ID}"
 fi

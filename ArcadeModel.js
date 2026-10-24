@@ -4,6 +4,44 @@ function pluginId(manifest) {
   return (manifest && manifest.id) ? manifest.id : "matt-dance.arcade"
 }
 
+function cacheDir(home, xdgCacheHome) {
+  var xdg = xdgCacheHome || ""
+  var h = home || ""
+  var base = (xdg && xdg.length) ? xdg : (h + "/.cache")
+  return base + "/matt-dance.arcade"
+}
+
+function libraryFilePath(home, xdgCacheHome) {
+  return cacheDir(home, xdgCacheHome) + "/library.json"
+}
+
+function pluginDirPath(home, manifest) {
+  return String(home || "") + "/.config/omarchy/plugins/" + pluginId(manifest)
+}
+
+function parseLibraryText(text) {
+  if (!text || !String(text).length)
+    return { games: [], errors: [], ok: true, empty: true }
+  try {
+    var data = JSON.parse(text)
+    var games = data.games || []
+    return {
+      games: games,
+      errors: data.errors || [],
+      ok: true,
+      empty: games.length === 0
+    }
+  } catch (e) {
+    return { games: [], errors: [], ok: false, empty: true, error: String(e) }
+  }
+}
+
+function resolvedGames(service, localGames) {
+  if (service && service.games && service.games.length)
+    return service.games
+  return localGames || []
+}
+
 function sourceLabel(source) {
   var map = {
     steam: "Steam",
@@ -76,6 +114,35 @@ function launchArgv(game) {
     return [String(value)]
   }
   return null
+}
+
+function playOnChoices(game) {
+  if (!game) return []
+  var out = [{
+    id: game.id,
+    source: game.source,
+    store: game.store,
+    title: game.title,
+    launch: game.launch,
+    track: game.track,
+    label: sourceLabel(game.source)
+  }]
+  var extra = game.alsoOn || []
+  for (var i = 0; i < extra.length; i++) {
+    var a = extra[i]
+    if (!a || typeof a === "string")
+      continue
+    out.push({
+      id: a.id || game.id,
+      source: a.source || "",
+      store: a.store,
+      title: a.title || game.title,
+      launch: a.launch,
+      track: a.track,
+      label: sourceLabel(a.source)
+    })
+  }
+  return out
 }
 
 function initials(title) {

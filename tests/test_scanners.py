@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from arcade.model import merge_games
+from arcade.model import Game, LaunchSpec, TrackSpec, merge_games, normalize_title
 from arcade.scanners import bottles, desktop, heroic, itch, lutris, steam
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -29,6 +29,13 @@ class TestSteamScanner(unittest.TestCase):
         self.assertEqual(elden.title, "ELDEN RING")
         self.assertEqual(elden.launch.value, "steam://rungameid/1245620")
         self.assertEqual(elden.track.window_class, "steam_app_1245620")
+        # Steam Linux Runtime 4.0 (4183110), a future runtime by name, and
+        # a generic type=tool app must never appear as playable games.
+        self.assertNotIn("steam:4183110", ids)
+        self.assertNotIn("steam:999001", ids)
+        self.assertNotIn("steam:888001", ids)
+        self.assertFalse(any("Steam Linux Runtime" in (g.title or "") for g in games))
+        self.assertFalse(any((g.title or "").startswith("Proton ") for g in games))
 
 
 class TestDesktopScanner(unittest.TestCase):
@@ -38,10 +45,31 @@ class TestDesktopScanner(unittest.TestCase):
             games, errors = desktop.scan()
         self.assertEqual(errors, [])
         ids = {g.id for g in games}
-        self.assertTrue(any(g.source == "gfn" for g in games))
-        gfn = next(g for g in games if g.source == "gfn")
-        self.assertEqual(gfn.title, "Diablo IV")
-        self.assertEqual(gfn.runner, "cloud")
+        gfn = [g for g in games if g.source == "gfn"]
+        gfn_titles = {g.title for g in gfn}
+        # Every plugin launcher: numeric cms-id files, plus the leftover slug
+        # file (gfn-diablo-iv) even when NoDisplay=true / plugin id is short.
+        self.assertEqual(
+            {g.id for g in gfn},
+            {
+                "gfn:gfn-102383111",
+                "gfn:gfn-102670811",
+                "gfn:gfn-107820252",
+                "gfn:gfn-diablo-iv",
+            },
+        )
+        self.assertEqual(
+            gfn_titles,
+            {
+                "Assassin's Creed Black Flag Resynced",
+                "Diablo IV",
+                "Enshrouded",
+            },
+        )
+        self.assertTrue(all(g.runner == "cloud" for g in gfn))
+        # GFN client itself is never a game
+        self.assertFalse(any("geforcenow" in g.id.lower() for g in games))
+        self.assertNotIn("GeForce NOW", {g.title for g in games})
         self.assertIn("desktop:super-meat-boy", ids)
         # Bare Steam launcher skipped
         self.assertFalse(any("steam" == g.id.split(":")[-1] for g in games if g.source == "desktop"))
@@ -134,8 +162,6 @@ Arch: win64
 
 class TestMerge(unittest.TestCase):
     def test_desktop_folds_into_steam(self):
-        from arcade.model import Game, LaunchSpec, TrackSpec
-
         steam_g = Game(
             id="steam:570",
             title="Dota 2",
@@ -156,6 +182,59 @@ class TestMerge(unittest.TestCase):
         merged = merge_games([desk, steam_g])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].source, "steam")
+
+    def test_gfn_prefix_merges_with_steam(self):
+        self.assertEqual(normalize_title("GFN - Enshrouded"), "enshrouded")
+        self.assertEqual(normalize_title("Enshrouded"), "enshrouded")
+        steam_g = Game(
+            id="steam:1203620",
+            title="Enshrouded",
+            source="steam",
+            steam_app_id=1203620,
+            launch=LaunchSpec(kind="uri", value="steam://rungameid/1203620"),
+            track=TrackSpec(steam_app_id=1203620),
+            dedupe_keys=["steam:1203620", "title:enshrouded"],
+        )
+        gfn = Game(
+            id="gfn:gfn-107820252",
+            title="GFN - Enshrouded",
+            source="gfn",
+            store="Steam",
+            runner="cloud",
+            launch=LaunchSpec(kind="desktop", value="/tmp/gfn-107820252.desktop"),
+            dedupe_keys=["gfn:107820252", "title:enshrouded"],
+        )
+        self.assertEqual(gfn.title, "Enshrouded")
+        merged = merge_games([steam_g, gfn])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].id, "steam:1203620")
+        self.assertEqual(merged[0].title, "Enshrouded")
+        self.assertEqual(len(merged[0].also_on), 1)
+        alt = merged[0].also_on[0]
+        self.assertEqual(alt["id"], "gfn:gfn-107820252")
+        self.assertEqual(alt["source"], "gfn")
+        self.assertEqual(alt["launch"]["kind"], "desktop")
+
+    def test_same_source_gfn_slug_and_cms_collapse(self):
+        a = Game(
+            id="gfn:gfn-102670811",
+            title="GFN - Diablo IV",
+            source="gfn",
+            launch=LaunchSpec(kind="desktop", value="/tmp/a.desktop"),
+            dedupe_keys=["gfn:102670811", "title:diabloiv"],
+        )
+        b = Game(
+            id="gfn:gfn-diablo-iv",
+            title="Diablo IV",
+            source="gfn",
+            launch=LaunchSpec(kind="desktop", value="/tmp/b.desktop"),
+            dedupe_keys=["title:diabloiv"],
+        )
+        merged = merge_games([a, b])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].title, "Diablo IV")
+        # Same source: no Play on… row
+        self.assertEqual(merged[0].also_on, [])
 
 
 if __name__ == "__main__":

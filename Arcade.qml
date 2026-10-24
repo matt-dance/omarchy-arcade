@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
@@ -9,6 +10,11 @@ import "ArcadeModel.js" as Model
 
 // Fullscreen Arcade library overlay.
 // Summon: omarchy-shell shell toggle matt-dance.arcade '{}'
+//
+// The in-game Quick Menu lives here as a child surface. Omarchy's host
+// prefers kind "panel" over "overlay" when both are declared, so Arcade
+// does not register a panel entry point — otherwise this bind would open
+// QuickMenu.qml instead of the library.
 Item {
   id: root
 
@@ -25,6 +31,20 @@ Item {
   property var visibleGames: []
   property string statusText: "Scanning library…"
   property bool showCheatSheet: false
+  property bool playOnOpen: false
+  property var playOnChoices: []
+  property int playOnIndex: 0
+  property var localGames: []
+  property var localScanErrors: []
+  property bool localScanPending: false
+  property string localScanError: ""
+
+  readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
+  readonly property string libraryFile: Model.libraryFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_CACHE_HOME") || ""
+  )
+  readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
 
   readonly property color background: Commons.Color.menu.background
   readonly property color foreground: Commons.Color.menu.text
@@ -40,17 +60,29 @@ Item {
   readonly property int gridGap: Style.space(Math.round(16 * uiScale))
 
   function open(payloadJson) {
+    var payload = {}
+    try {
+      if (payloadJson && String(payloadJson).length)
+        payload = JSON.parse(payloadJson)
+    } catch (e) {
+      payload = {}
+    }
+    if (payload && payload.surface === "quickmenu") {
+      root.showQuickMenu(payloadJson)
+      return
+    }
+    if (quickMenu && quickMenu.opened)
+      quickMenu.close()
+    root.playOnOpen = false
     root.opened = true
     root.screen = "home"
     root.filterText = ""
     root.selectedIndex = 0
+    root.loadLibraryFromDisk()
     root.refreshList()
-    if (root.service) {
-      if (typeof root.service.setUiMode === "function")
-        root.service.setUiMode(true)
-      if (!root.service.games || root.service.games.length === 0)
-        root.service.rescan()
-    }
+    root.ensureLibrary()
+    if (root.service && typeof root.service.setUiMode === "function")
+      root.service.setUiMode(true)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -66,8 +98,60 @@ Item {
       root.shell.hide(Model.pluginId(root.manifest))
   }
 
+  function libraryGames() {
+    return Model.resolvedGames(root.service, root.localGames)
+  }
+
+  function loadLibraryFromDisk() {
+    var text = ""
+    try {
+      text = libraryView.text()
+    } catch (e2) {
+      text = ""
+    }
+    var parsed = Model.parseLibraryText(text)
+    root.localGames = parsed.games
+    root.localScanErrors = parsed.errors
+    if (!parsed.ok)
+      root.localScanError = parsed.error || "library.json parse failed"
+    console.warn("matt-dance.arcade: overlay cache " + root.libraryFile + " games=" + root.localGames.length
+                 + " service=" + (root.service ? "yes" : "no"))
+    root.refreshList()
+  }
+
+  function startLocalScan() {
+    if (localScanProcess.running)
+      return
+    root.localScanPending = true
+    root.localScanError = ""
+    localScanProcess.command = ["/usr/bin/python3", root.scanBin, "--plugin-dir", root.pluginDir]
+    console.warn("matt-dance.arcade: overlay starting arcade-scan " + root.scanBin)
+    localScanProcess.running = true
+  }
+
+  function ensureLibrary() {
+    if (root.libraryGames().length)
+      return
+    if (root.service && typeof root.service.rescan === "function")
+      root.service.rescan()
+    root.startLocalScan()
+  }
+
+  function launchResolved(game) {
+    if (root.service && typeof root.service.launchGame === "function")
+      return root.service.launchGame(game)
+    var argv = Model.launchArgv(game)
+    if (!argv) {
+      console.warn("matt-dance.arcade: cannot launch, no command and no service")
+      return false
+    }
+    console.warn("matt-dance.arcade: launching without service: " + argv.join(" "))
+    Quickshell.execDetached(argv)
+    return true
+  }
+
   function refreshList() {
-    var games = (root.service && root.service.games) ? root.service.games : []
+    var games = root.libraryGames()
     if (root.screen === "home" && !root.filterText)
       root.visibleGames = Model.recentGames(games, 24)
     else
@@ -75,10 +159,13 @@ Item {
     if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
     var n = games.length
-    if (root.service && root.service.lastAction === "scan:pending")
+    var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
+    if (scanning && n === 0)
       root.statusText = "Scanning library…"
     else if (n === 0)
       root.statusText = "No games found — install Steam, Heroic, or add .desktop games"
+    else if (!root.service)
+      root.statusText = n + " games (cached) · service not loaded — omarchy-restart-shell"
     else if (root.screen === "home")
       root.statusText = "Recently played · " + n + " games total"
     else
@@ -102,12 +189,53 @@ Item {
     if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
       return
     var game = root.visibleGames[root.selectedIndex]
-    if (root.service && typeof root.service.launchGame === "function")
-      root.service.launchGame(game)
+    var choices = Model.playOnChoices(game)
+    if (choices.length > 1) {
+      root.playOnChoices = choices
+      root.playOnIndex = 0
+      root.playOnOpen = true
+      return
+    }
+    root.launchResolved(game)
+  }
+
+  function launchPlayOnChoice() {
+    if (!root.playOnOpen || root.playOnIndex < 0 || root.playOnIndex >= root.playOnChoices.length)
+      return
+    var choice = root.playOnChoices[root.playOnIndex]
+    root.playOnOpen = false
+    root.launchResolved(choice)
+  }
+
+  // Host `shell call matt-dance.arcade <method>` hits this overlay item, not Service.qml.
+  function rescan(payloadJson) {
+    if (root.service && typeof root.service.rescan === "function")
+      return root.service.rescan(payloadJson)
+    root.startLocalScan()
+    return "ok"
+  }
+
+  function showQuickMenu(payloadJson) {
+    if (quickMenu) {
+      quickMenu.open(payloadJson || "{}")
+      return "ok"
+    }
+    return "unknown"
+  }
+
+  function status() {
+    if (root.service && typeof root.service.status === "function")
+      return root.service.status()
+    return "{}"
   }
 
   function handleIntent(name) {
     if (!root.opened) return
+    if (root.playOnOpen) {
+      if (name === "accept") root.launchPlayOnChoice()
+      else if (name === "back") root.playOnOpen = false
+      return
+    }
     if (name === "accept") root.activateSelected()
     else if (name === "back") {
       if (root.filterText) root.filterText = ""
@@ -132,11 +260,25 @@ Item {
     else if (name === "page_up") root.moveSelection(0, -2)
   }
 
+  onServiceChanged: {
+    console.warn("matt-dance.arcade: overlay service=" + (root.service ? "attached" : "null"))
+    root.refreshList()
+  }
+
   Connections {
     target: root.service
     function onLibraryChanged() { root.refreshList() }
     function onNav(dir, repeat) {
       if (!root.opened) return
+      if (root.playOnOpen) {
+        var n = root.playOnChoices.length
+        if (!n) return
+        if (dir === "up" || dir === "left")
+          root.playOnIndex = (root.playOnIndex - 1 + n) % n
+        else if (dir === "down" || dir === "right")
+          root.playOnIndex = (root.playOnIndex + 1) % n
+        return
+      }
       if (dir === "up") root.moveSelection(0, -1)
       else if (dir === "down") root.moveSelection(0, 1)
       else if (dir === "left") root.moveSelection(-1, 0)
@@ -256,7 +398,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live. SteamGridDB key (optional): ~/.config/omarchy/arcade/steamgriddb.key\n\nControllers connected: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : "starting") + "\n\nHARDWARE TEST NEEDED: controller navigation, Guide chords, game launch/return, idle inhibit."
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live. SteamGridDB key (optional): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -346,7 +488,7 @@ Item {
                 }
               }
 
-              // Source badge
+              // Source badge (or "Play on…" when the same title exists on multiple stores)
               Rectangle {
                 anchors.left: parent.left
                 anchors.top: parent.top
@@ -358,7 +500,9 @@ Item {
                 Text {
                   id: badgeLabel
                   anchors.centerIn: parent
-                  text: Model.sourceLabel(modelData.source)
+                  text: (modelData.alsoOn && modelData.alsoOn.length)
+                        ? "Play on…"
+                        : Model.sourceLabel(modelData.source)
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -432,6 +576,22 @@ Item {
         focus: true
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (root.playOnOpen) {
+            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+              root.playOnOpen = false; event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.launchPlayOnChoice(); event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K || event.key === Qt.Key_Left || event.key === Qt.Key_H) {
+              var n = root.playOnChoices.length
+              if (n) root.playOnIndex = (root.playOnIndex - 1 + n) % n
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Right || event.key === Qt.Key_L) {
+              var m = root.playOnChoices.length
+              if (m) root.playOnIndex = (root.playOnIndex + 1) % m
+              event.accepted = true
+            }
+            return
+          }
           if (event.key === Qt.Key_Escape) {
             if (root.filterText) {
               root.filterText = ""
@@ -483,6 +643,121 @@ Item {
           }
         }
       }
+
+      // Play on… picker (same title from two stores)
+      Rectangle {
+        anchors.fill: parent
+        visible: root.playOnOpen
+        color: Qt.rgba(0, 0, 0, 0.45)
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.playOnOpen = false
+        }
+
+        Rectangle {
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(80), Style.space(420))
+          height: playOnColumn.implicitHeight + Style.spacing.panelPadding * 2
+          radius: root.cornerRadius
+          color: root.background
+          border.color: Commons.Color.menu.border
+          border.width: 1
+
+          ColumnLayout {
+            id: playOnColumn
+            anchors.fill: parent
+            anchors.margins: Style.spacing.panelPadding
+            spacing: Style.spacing.sm
+
+            Text {
+              text: "Play on…"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+            }
+            Repeater {
+              model: root.playOnChoices
+              Rectangle {
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true
+                Layout.preferredHeight: Style.space(44)
+                radius: root.cornerRadius
+                color: index === root.playOnIndex ? root.selectedBackground : "transparent"
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.controlPaddingX
+                  text: modelData.label || Model.sourceLabel(modelData.source)
+                  color: index === root.playOnIndex ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: root.playOnIndex = index
+                  onClicked: {
+                    root.playOnIndex = index
+                    root.launchPlayOnChoice()
+                  }
+                }
+              }
+            }
+            Text {
+              text: "A / Enter  play   ·   B / Esc  back"
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
     }
+  }
+
+  QuickMenu {
+    id: quickMenu
+    shell: root.shell
+    manifest: root.manifest
+    pluginRegistry: root.pluginRegistry
+    service: root.service
+  }
+
+  FileView {
+    id: libraryView
+    path: root.libraryFile
+    watchChanges: true
+    onFileChanged: root.loadLibraryFromDisk()
+    onLoaded: root.loadLibraryFromDisk()
+  }
+
+  Process {
+    id: localScanProcess
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.localScanPending = false
+        root.loadLibraryFromDisk()
+      }
+    }
+    stderr: StdioCollector {
+      onStreamFinished: {
+        if (text && text.length)
+          root.localScanError = text.trim()
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.localScanPending = false
+      if (exitCode !== 0)
+        console.warn("matt-dance.arcade: overlay arcade-scan exited " + exitCode)
+      root.loadLibraryFromDisk()
+    }
+  }
+
+  Component.onCompleted: {
+    console.warn("matt-dance.arcade: overlay loaded; cache=" + root.libraryFile)
+    root.loadLibraryFromDisk()
   }
 }

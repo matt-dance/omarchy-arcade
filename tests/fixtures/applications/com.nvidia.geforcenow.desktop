@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GeForce NOW
+Comment=NVIDIA GeForce NOW
+Exec=flatpak run com.nvidia.geforcenow
+Icon=com.nvidia.geforcenow
+Categories=Game;
+X-Flatpak=com.nvidia.geforcenow

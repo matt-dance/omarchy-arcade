@@ -16,7 +16,8 @@ omarchy-shell (Quickshell, Qt 6, one long-lived process)
     │   ├── IdleInhibitor while Arcade is open or a tracked game runs
     │   └── FileView watches: arcade.toml, library sources, theme changes are automatic
     ├── Arcade.qml        kind: overlay   full-screen library on the overlay layer
-    └── QuickMenu.qml     kind: panel     in-game side sheet
+    │                     also reads library.json + runs arcade-scan if the service is absent
+    └── QuickMenu.qml     in-game side sheet (child of Arcade.qml, not a plugin kind)
 
 bin/arcaded (Python 3 stdlib)
 ├── input/     evdev discovery (inotify on /dev/input), capability filter, per-device reader
@@ -81,13 +82,15 @@ Service to daemon:
   "playtimeMinutes": 5120,
   "lastPlayed": "2026-10-20T21:14:00Z",
   "dedupeKeys": ["title:witcher3wildhunt", "steam:292030"],
-  "alsoOn": []                          // filled by the merger: other sources of the same game
+  "alsoOn": [                           // filled by the merger: other sources of the same game
+    { "id": "gfn:gfn-107820252", "source": "gfn", "title": "Enshrouded", "launch": { "kind": "desktop", "value": "…" } }
+  ]
 }
 ```
 
 - **Library cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/library.json`. It is rebuilt by `arcade-scan` and atomically replaced.
 - **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` holds favorites, hidden games, per-game options, Arcade's own last-played times and playtime, and the "Play on" preference. It survives rescans and cache wipes.
-- **Merging:** a `.desktop` entry whose `Exec` launches `steam://rungameid/`, `heroic://`, `lutris:rungameid/` or `itch://` is folded into that source's entry. Titles that match after normalization across different stores collapse into one card with `alsoOn`.
+- **Merging:** a `.desktop` entry whose `Exec` launches `steam://rungameid/`, `heroic://`, `lutris:rungameid/` or `itch://` is folded into that source's entry. Titles that match after normalization (including stripping a `GFN - ` prefix) across different stores collapse into one card with `alsoOn` launch payloads for the Play on… picker.
 
 ## Scanners
 
@@ -162,7 +165,7 @@ All writes are idempotent, support `--dry-run`, make a `.bak.<timestamp>` backup
 
 | Target | What |
 |---|---|
-| `~/.config/hypr/arcade.lua` | A whole file owned by the plugin: `o.bind("SUPER + CTRL + G", "Arcade", "omarchy-shell shell toggle matt-dance.arcade '{}'")`, plus the optional `XF86Game` bind |
+| `~/.config/hypr/arcade.lua` | A whole file owned by the plugin: `o.bind("SUPER + CTRL + G", "Arcade", "omarchy-shell shell toggle matt-dance.arcade '{}'")`, plus the optional `XF86Game` bind. Omarchy's host prefers kind `panel` over `overlay` when both are declared and `toggle <id>` has no kind argument, so Arcade declares only `overlay` + `service` — this bind opens the library, not the Quick Menu. |
 | `~/.config/hypr/hyprland.lua` | One managed line, `require("default.hypr.require_optional").module("hypr.arcade")`, so deleting the file can never break Hyprland's config |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | A managed `BEGIN`/`END matt-dance.arcade` block: `gaming.arcade` (Open Arcade) and `gaming.arcade.rescan`. It reuses an existing `gaming` root, such as the one from the GFN plugin, instead of redefining it |
 | `~/.config/omarchy/arcade/arcade.toml` | Created only if absent, as a commented copy of the defaults |
@@ -176,7 +179,7 @@ When Arcade is opened before `install.sh` has run (from the menu or IPC), Settin
 ├── manifest.json
 ├── preview.png
 ├── Service.qml
-├── Arcade.qml
+├── Arcade.qml            overlay entry (library + hosts QuickMenu)
 ├── QuickMenu.qml
 ├── screens/            Home.qml, Library.qml, Details.qml, Search.qml, Settings.qml, Power.qml
 ├── ui/                 FocusGrid.qml, GameCard.qml, TypeCard.qml, Shelf.qml, HintBar.qml, Osk.qml, Glyphs.js

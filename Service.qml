@@ -39,12 +39,14 @@ Item {
   property bool quickMenuWanted: false
   property bool uiOpen: false
 
+  // Custom signals must not match a property's automatic *Changed signal.
+  // `padsChanged` used to be declared here and collided with `property var pads`,
+  // which prevented the service (and therefore arcaded) from loading.
   signal libraryChanged()
   signal sessionChanged()
   signal nav(string dir, bool repeat)
   signal intent(string name)
   signal actionFired(string name, string reason)
-  signal padsChanged()
   signal quickMenuRequested()
 
   // Controller input does not reset Hyprland/Omarchy idle timers.
@@ -79,12 +81,26 @@ Item {
     notifyProcess.running = true
   }
 
+  function log(msg) {
+    console.warn("matt-dance.arcade: " + msg)
+  }
+
+  function pythonCmd(script, extra) {
+    var args = ["/usr/bin/python3", script]
+    if (extra && extra.length) {
+      for (var i = 0; i < extra.length; i++)
+        args.push(extra[i])
+    }
+    return args
+  }
+
   function rescan(payloadJson) {
     root.lastAction = "scan:pending"
     root.lastError = ""
     if (scanProcess.running)
       scanProcess.running = false
-    scanProcess.command = [root.scanBin, "--plugin-dir", root.pluginDir]
+    scanProcess.command = root.pythonCmd(root.scanBin, ["--plugin-dir", root.pluginDir])
+    root.log("starting arcade-scan " + root.scanBin)
     scanProcess.running = true
     return "ok"
   }
@@ -92,20 +108,22 @@ Item {
   function loadLibraryFromDisk() {
     try {
       var text = libraryView.text()
-      if (!text || !text.length) {
-        root.games = []
-        root.scanErrors = []
-        root.libraryChanged()
+      var parsed = Model.parseLibraryText(text)
+      root.games = parsed.games
+      root.scanErrors = parsed.errors
+      if (!parsed.ok) {
+        root.lastError = parsed.error || "library.json parse failed"
+        root.lastAction = "scan:failed"
+        root.log("library.json parse failed: " + root.lastError)
         return
       }
-      var data = JSON.parse(text)
-      root.games = data.games || []
-      root.scanErrors = data.errors || []
-      root.lastAction = "scan:done"
+      root.lastAction = parsed.empty ? "scan:empty" : "scan:done"
+      root.log("loaded library.json games=" + root.games.length)
       root.libraryChanged()
     } catch (e) {
       root.lastError = String(e)
       root.lastAction = "scan:failed"
+      root.log("loadLibraryFromDisk failed: " + e)
     }
   }
 
@@ -219,11 +237,13 @@ Item {
   function startDaemon() {
     if (daemon.running)
       return
-    daemon.command = [
-      root.daemonBin,
+    // python3 so a missing +x bit on bin/arcaded does not become a silent 127.
+    daemon.command = root.pythonCmd(root.daemonBin, [
       "--exit-with-stdin",
-      "--plugin-dir", root.pluginDir
-    ]
+      "--plugin-dir",
+      root.pluginDir
+    ])
+    root.log("starting arcaded " + daemon.command.join(" "))
     daemon.running = true
   }
 
@@ -237,10 +257,10 @@ Item {
     var t = msg.t
     if (t === "hello") {
       root.daemonReady = true
+      root.log("arcaded hello pid=" + (msg.pid || "?") + " version=" + (msg.version || "?"))
       root.setUiMode(false)
     } else if (t === "pads") {
       root.pads = msg.pads || []
-      root.padsChanged()
     } else if (t === "config") {
       root.configErrors = msg.errors || []
     } else if (t === "nav") {
@@ -309,8 +329,15 @@ Item {
   }
 
   Component.onCompleted: {
+    root.log("service loaded; pluginDir=" + root.pluginDir + " cache=" + root.libraryFile)
     root.startDaemon()
+    root.loadLibraryFromDisk()
     root.rescan()
+  }
+
+  onManifestChanged: {
+    root.log("manifest attached id=" + Model.pluginId(root.manifest))
+    root.startDaemon()
   }
 
   FileView {
@@ -330,7 +357,7 @@ Item {
       onStreamFinished: {
         root.loadLibraryFromDisk()
         if (!artProcess.running) {
-          artProcess.command = [root.artBin, "--plugin-dir", root.pluginDir, "--limit", "10"]
+          artProcess.command = root.pythonCmd(root.artBin, ["--plugin-dir", root.pluginDir, "--limit", "10"])
           artProcess.running = true
         }
       }
@@ -366,14 +393,13 @@ Item {
     stderr: SplitParser {
       onRead: function(line) {
         if (line && line.trim() !== "")
-          console.log("arcaded:", line)
+          console.warn(line)
       }
     }
     onExited: function(exitCode, exitStatus) {
       root.daemonReady = false
-      if (exitCode === 127)
-        return
-      daemonRestart.interval = 3000
+      root.log("arcaded exited code=" + exitCode + " status=" + exitStatus + " — will retry")
+      daemonRestart.interval = exitCode === 127 ? 1500 : 3000
       daemonRestart.restart()
     }
   }

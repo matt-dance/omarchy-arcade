@@ -11,9 +11,39 @@ from typing import Any
 
 _TITLE_STRIP = re.compile(r"[^a-z0-9]+")
 
+# Display prefixes added by launcher plugins. Stripped for both the shown
+# title and the merge key so "GFN - Enshrouded" collapses into "Enshrouded".
+_SOURCE_TITLE_PREFIXES = (
+    "gfn - ",
+    "gfn – ",
+    "gfn — ",
+    "gfn-",
+    "gfn –",
+    "geforce now - ",
+    "geforce now – ",
+    "geforce now — ",
+    "geforce now: ",
+    "geforce now ",
+)
+
+
+def strip_source_title_prefix(title: str) -> str:
+    """Remove a leading 'GFN - ' / 'GeForce NOW' prefix (any common dash)."""
+    t = (title or "").strip()
+    changed = True
+    while t and changed:
+        changed = False
+        lower = t.casefold()
+        for prefix in _SOURCE_TITLE_PREFIXES:
+            if lower.startswith(prefix):
+                t = t[len(prefix) :].strip()
+                changed = True
+                break
+    return t
+
 
 def normalize_title(title: str) -> str:
-    t = title.casefold().strip()
+    t = strip_source_title_prefix(title).casefold().strip()
     for suffix in (
         " game of the year edition",
         " definitive edition",
@@ -86,10 +116,12 @@ class Game:
     playtime_minutes: int | None = None
     last_played: str | None = None
     dedupe_keys: list[str] = field(default_factory=list)
-    also_on: list[str] = field(default_factory=list)
+    also_on: list[Any] = field(default_factory=list)
     description: str | None = None
 
     def __post_init__(self) -> None:
+        if self.source == "gfn":
+            self.title = strip_source_title_prefix(self.title)
         if not self.dedupe_keys:
             keys = [f"title:{normalize_title(self.title)}"]
             if self.steam_app_id:
@@ -134,6 +166,30 @@ class ScanError:
         return {"source": self.source, "error": self.error}
 
 
+def also_on_payload(game: Game) -> dict[str, Any]:
+    """Launchable alternate source for the Play on… picker."""
+    return {
+        "id": game.id,
+        "source": game.source,
+        "store": game.store,
+        "title": game.title,
+        "launch": game.launch.to_dict() if game.launch else None,
+        "track": game.track.to_dict(),
+    }
+
+
+def _also_on_id(entry: Any) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("id")
+    return None
+
+
+def _has_also_on(entries: list[Any], game_id: str) -> bool:
+    return any(_also_on_id(e) == game_id for e in entries)
+
+
 def merge_games(games: list[Game]) -> list[Game]:
     """Collapse duplicates. Prefer richer sources over bare .desktop wrappers."""
     source_rank = {
@@ -167,8 +223,8 @@ def merge_games(games: list[Game]) -> list[Game]:
 
         # Prefer non-desktop over desktop wrappers; keep higher-ranked source.
         if source_rank.get(game.source, 99) < source_rank.get(primary.source, 99):
-            if primary.id not in game.also_on:
-                game.also_on = list(dict.fromkeys([*game.also_on, primary.id]))
+            if primary.source != game.source and not _has_also_on(game.also_on, primary.id):
+                game.also_on = [*game.also_on, also_on_payload(primary)]
             for key in game.dedupe_keys:
                 by_key[key] = game
             # Replace order entry
@@ -177,8 +233,8 @@ def merge_games(games: list[Game]) -> list[Game]:
                     order[i] = game.dedupe_keys[0]
                     break
         else:
-            if game.id not in primary.also_on and game.source != primary.source:
-                primary.also_on = list(dict.fromkeys([*primary.also_on, game.id]))
+            if game.source != primary.source and not _has_also_on(primary.also_on, game.id):
+                primary.also_on = [*primary.also_on, also_on_payload(game)]
             # Absorb art / playtime when missing
             if not primary.art.cover and game.art.cover:
                 primary.art.cover = game.art.cover
@@ -199,6 +255,30 @@ def merge_games(games: list[Game]) -> list[Game]:
         result.append(g)
     result.sort(key=lambda g: g.sort_title)
     return result
+
+
+def parse_library_text(text: str | None) -> dict[str, Any]:
+    """Parse library.json text the same way the overlay fallback does."""
+    if not text or not str(text).strip():
+        return {"games": [], "errors": [], "ok": True, "empty": True}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return {"games": [], "errors": [], "ok": False, "empty": True, "error": str(exc)}
+    games = data.get("games") or []
+    return {
+        "games": games,
+        "errors": data.get("errors") or [],
+        "ok": True,
+        "empty": len(games) == 0,
+    }
+
+
+def resolved_games(service_games: list[Any] | None, local_games: list[Any] | None) -> list[Any]:
+    """Prefer an in-memory service library; fall back to the on-disk cache."""
+    if service_games:
+        return list(service_games)
+    return list(local_games or [])
 
 
 def write_library(path: Path, games: list[Game], errors: list[ScanError]) -> None:

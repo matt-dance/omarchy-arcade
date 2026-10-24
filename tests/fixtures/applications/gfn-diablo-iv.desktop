@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Diablo IV
+Comment=GeForce NOW
+Exec=bash /home/user/.config/omarchy/plugins/matt-dance.gfn/scripts/gfn-play.sh --short-name diablo-iv --title "Diablo IV"
+Icon=applications-games
+Categories=Game;
+NoDisplay=true
+X-Omarchy-Plugin=matt-dance.gfn
