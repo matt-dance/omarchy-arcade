@@ -47,7 +47,7 @@ Why not "Game Mode":
 
 | Layer | Choice |
 |---|---|
-| UI | A **Quickshell QML plugin inside `omarchy-shell`**, using the `overlay` kind (full-screen library), `panel` (in-game quick menu) and `service` (`keepLoaded`, owns the state and the daemon) |
+| UI | A **Quickshell QML plugin inside `omarchy-shell`**, using the `overlay` kind (full-screen library) and `service` (`keepLoaded`, owns the state and the daemon). The in-game Quick Menu is a child surface of the overlay — Omarchy's host prefers `panel` over `overlay` when both kinds are declared, so Arcade does not register a panel entry point. |
 | Theming | The shell's `qs.Commons` singletons: `Commons.Color.*`, `Style.*` and `Border.*`, plus `BorderSurface` from `qs.Ui`. No theme parsing of our own |
 | Controller input and session tracking | **`arcaded`**, a long-lived **Python 3 standard-library** daemon. It reads evdev directly with `ioctl` and `select`, and it uses `pidfd` and inotify through `os` and `ctypes`. It speaks JSON lines to the service |
 | Library scanners and art fetcher | Python 3 standard library, using `sqlite3`, `json`, `tomllib`, `urllib` and a small binary-VDF parser. They run as one-shot subprocesses |
@@ -104,10 +104,10 @@ The detail is in [`ARCHITECTURE.md`](ARCHITECTURE.md). In summary:
 
 | Module | Lives in | Responsibility |
 |---|---|---|
-| `manifest.json` | root | Id `matt-dance.arcade`, kinds `overlay`, `panel`, `service`, `keepLoaded: true` |
+| `manifest.json` | root | Id `matt-dance.arcade`, kinds `overlay`, `service`, `keepLoaded: true` |
 | `Service.qml` | QML | Singleton state: library model, session state machine, IPC target, starts and stops `arcaded`, routes intents |
 | `Arcade.qml` + `screens/` | QML | Full-screen overlay: Home, Library, Game details, Search, Settings, Power |
-| `QuickMenu.qml` | QML | In-game side panel: resume, close game, volume, screenshot, record, performance overlay, Omarchy menu, back to Arcade |
+| `QuickMenu.qml` | QML | In-game side sheet hosted by Arcade.qml: resume, close game, volume, screenshot, record, performance overlay, Omarchy menu, back to Arcade |
 | `ui/` | QML | Focus-grid navigation, game cards, shelves, button-hint footer, on-screen keyboard, glyph sets |
 | `bin/arcaded` | Python | Long-lived daemon: input (`input/`), chord engine (`combos/`), session tracker (`session/`), config loader and watcher |
 | `bin/arcade-scan` | Python | One-shot scanner run: every `scanners/*.py` → unified `library.json` |

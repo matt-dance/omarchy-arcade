@@ -39,12 +39,14 @@ Item {
   property bool quickMenuWanted: false
   property bool uiOpen: false
 
+  // Custom signals must not match a property's automatic *Changed signal.
+  // `padsChanged` used to be declared here and collided with `property var pads`,
+  // which prevented the service (and therefore arcaded) from loading.
   signal libraryChanged()
   signal sessionChanged()
   signal nav(string dir, bool repeat)
   signal intent(string name)
   signal actionFired(string name, string reason)
-  signal padsChanged()
   signal quickMenuRequested()
 
   // Controller input does not reset Hyprland/Omarchy idle timers.
@@ -240,7 +242,6 @@ Item {
       root.setUiMode(false)
     } else if (t === "pads") {
       root.pads = msg.pads || []
-      root.padsChanged()
     } else if (t === "config") {
       root.configErrors = msg.errors || []
     } else if (t === "nav") {

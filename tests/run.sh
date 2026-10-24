@@ -4,3 +4,4 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m unittest discover -s tests -v
+"$ROOT/tests/test-install.sh"

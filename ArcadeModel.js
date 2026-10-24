@@ -78,6 +78,35 @@ function launchArgv(game) {
   return null
 }
 
+function playOnChoices(game) {
+  if (!game) return []
+  var out = [{
+    id: game.id,
+    source: game.source,
+    store: game.store,
+    title: game.title,
+    launch: game.launch,
+    track: game.track,
+    label: sourceLabel(game.source)
+  }]
+  var extra = game.alsoOn || []
+  for (var i = 0; i < extra.length; i++) {
+    var a = extra[i]
+    if (!a || typeof a === "string")
+      continue
+    out.push({
+      id: a.id || game.id,
+      source: a.source || "",
+      store: a.store,
+      title: a.title || game.title,
+      launch: a.launch,
+      track: a.track,
+      label: sourceLabel(a.source)
+    })
+  }
+  return out
+}
+
 function initials(title) {
   var t = String(title || "").trim()
   if (!t.length) return "?"

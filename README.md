@@ -124,8 +124,8 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ```text
 .
 ├── manifest.json          # Omarchy plugin manifest
-├── Arcade.qml             # Fullscreen library overlay
-├── QuickMenu.qml          # In-game quick menu panel
+├── Arcade.qml             # Fullscreen library overlay (the toggle target)
+├── QuickMenu.qml          # In-game quick menu (hosted by Arcade.qml)
 ├── Service.qml            # keepLoaded service (daemon + library)
 ├── ArcadeModel.js
 ├── bin/arcaded            # Python stdlib daemon (evdev + session)

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GFN - Assassin's Creed Black Flag Resynced
+Comment=Ubisoft
+Exec=bash /home/user/.config/omarchy/plugins/matt-dance.gfn-omarchy/scripts/gfn-play.sh --cms-id 102383111 --parent-game-id acbf --title "Assassin's Creed Black Flag Resynced"
+Icon=/home/user/.local/share/icons/gfn/gfn-102383111.png
+Categories=Game;
+X-Omarchy-Plugin=matt-dance.gfn-omarchy
+X-GFN-CmsId=102383111
+X-GFN-ParentGameId=acbf
+X-GFN-AppStore=Ubisoft

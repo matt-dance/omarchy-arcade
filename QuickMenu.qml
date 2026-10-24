@@ -7,7 +7,9 @@ import qs.Commons as Commons
 import qs.Ui
 import "ArcadeModel.js" as Model
 
-// In-game quick menu (panel). Opened by Guide tap while a game is running.
+// In-game quick menu. Opened by Guide tap while a game is running.
+// Hosted as a child of Arcade.qml (not a plugin `panel` kind — Omarchy's
+// shell toggle prefers panel over overlay when both are declared).
 Item {
   id: root
 
@@ -43,8 +45,6 @@ Item {
 
   function dismiss() {
     root.close()
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide(Model.pluginId(root.manifest))
   }
 
   function runAction(id) {

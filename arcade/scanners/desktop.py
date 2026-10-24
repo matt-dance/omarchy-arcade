@@ -5,7 +5,15 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
+from ..model import (
+    ArtSpec,
+    Game,
+    LaunchSpec,
+    ScanError,
+    TrackSpec,
+    normalize_title,
+    strip_source_title_prefix,
+)
 from ..paths import application_dirs
 
 # Launchers themselves — not games.
@@ -30,6 +38,23 @@ _SKIP_IDS = {
     "com.moonlight_stream.Moonlight",
     "moonlight",
 }
+
+# NVIDIA GeForce NOW client — never a library title.
+_GFN_CLIENT_IDS = {
+    "com.nvidia.geforcenow",
+    "nvidia-geforcenow",
+    "geforcenow",
+    "geforce-now",
+}
+_GFN_CLIENT_NAMES = {
+    "geforce now",
+    "nvidia geforce now",
+    "nvidia® geforce now",
+}
+_GFN_PLUGIN_PREFIXES = (
+    "matt-dance.gfn",
+    "matt-dance.gfn-omarchy",
+)
 
 _SKIP_EXEC_PREFIXES = (
     "steam %U",
@@ -57,26 +82,59 @@ def _parse_desktop(path: Path) -> dict[str, str] | None:
         fields.setdefault(key.strip(), value.strip())
     if not fields.get("Name") or not fields.get("Exec"):
         return None
-    if fields.get("NoDisplay", "").lower() in ("true", "1") or fields.get("Hidden", "").lower() in (
-        "true",
-        "1",
-    ):
-        return None
     if fields.get("Type", "Application") != "Application":
         return None
     return fields
+
+
+def _is_hidden(fields: dict[str, str]) -> bool:
+    return fields.get("NoDisplay", "").lower() in ("true", "1") or fields.get(
+        "Hidden", ""
+    ).lower() in ("true", "1")
 
 
 def _categories(fields: dict[str, str]) -> set[str]:
     return {c for c in fields.get("Categories", "").split(";") if c}
 
 
-def _is_game(fields: dict[str, str]) -> str | None:
-    """Return a source tag if this desktop entry should appear, else None."""
-    cats = _categories(fields)
+def _is_gfn_client(fields: dict[str, str], stem: str) -> bool:
+    if stem in _GFN_CLIENT_IDS or stem in _SKIP_IDS and "geforce" in stem:
+        return True
+    name = fields.get("Name", "").casefold().strip()
+    if name in _GFN_CLIENT_NAMES:
+        return True
+    exec_line = fields.get("Exec", "").casefold()
+    if "gfn-play.sh" in exec_line or any(k.startswith("X-GFN-") for k in fields):
+        return False
+    if "geforcenow" in exec_line or "geforce now" in exec_line:
+        return True
+    return False
+
+
+def _is_gfn_launcher(fields: dict[str, str], stem: str) -> bool:
+    """True for a GeForce NOW Menu plugin title, never the GFN client."""
+    if _is_gfn_client(fields, stem):
+        return False
     plugin = fields.get("X-Omarchy-Plugin", "")
-    if plugin == "matt-dance.gfn-omarchy" or fields.get("X-GFN-CmsId"):
+    if any(plugin == p or plugin.startswith(p + ".") or plugin.startswith(p + "-") for p in _GFN_PLUGIN_PREFIXES):
+        return True
+    if plugin.startswith("matt-dance.gfn"):
+        return True
+    if any(key.startswith("X-GFN-") for key in fields):
+        return True
+    if stem.startswith("gfn-"):
+        return True
+    exec_line = fields.get("Exec", "")
+    if "gfn-play.sh" in exec_line:
+        return True
+    return False
+
+
+def _is_game(fields: dict[str, str], stem: str = "") -> str | None:
+    """Return a source tag if this desktop entry should appear, else None."""
+    if _is_gfn_launcher(fields, stem):
         return "gfn"
+    cats = _categories(fields)
     exec_line = fields.get("Exec", "")
     if "omarchy-launch-webapp" in exec_line and (
         "xbox.com" in exec_line.lower() or "xbox" in fields.get("Name", "").lower()
@@ -88,7 +146,9 @@ def _is_game(fields: dict[str, str]) -> str | None:
         return "desktop"
     # Explicit gaming keywords in Name for known Omarchy webapps without Game category
     name = fields.get("Name", "").lower()
-    if any(k in name for k in ("xbox cloud", "geforce now", "minecraft")):
+    if _is_gfn_client(fields, stem) or name in _GFN_CLIENT_NAMES:
+        return None
+    if any(k in name for k in ("xbox cloud", "minecraft")):
         return "webapp" if "omarchy-launch-webapp" in exec_line else "desktop"
     return None
 
@@ -133,18 +193,22 @@ def scan() -> tuple[list[Game], list[ScanError]]:
             continue
         for path in entries:
             stem = path.stem
-            if stem in _SKIP_IDS or stem.startswith("steam_"):
-                # steam_app_* shortcuts sometimes land in applications — skip,
-                # Steam scanner owns those.
-                if stem.startswith("steam_app_"):
-                    continue
-                if stem in _SKIP_IDS:
-                    continue
+            if stem.startswith("steam_app_"):
+                # Steam scanner owns steam_app_* shortcuts.
+                continue
+            if stem in _SKIP_IDS or stem in _GFN_CLIENT_IDS:
+                continue
             fields = _parse_desktop(path)
             if not fields:
                 continue
-            source = _is_game(fields)
+            source = _is_game(fields, stem)
             if not source:
+                continue
+            # Plugin-managed GFN launchers stay in the library even when the
+            # leftover slug file is marked NoDisplay after a cms-id rewrite.
+            if source != "gfn" and _is_hidden(fields):
+                continue
+            if _is_gfn_client(fields, stem):
                 continue
             exec_line = fields["Exec"]
             if any(exec_line.lower().startswith(p) for p in _SKIP_EXEC_PREFIXES):
@@ -165,8 +229,7 @@ def scan() -> tuple[list[Game], list[ScanError]]:
             if source == "gfn":
                 store = fields.get("X-GFN-AppStore") or "gfn"
                 runner = "cloud"
-                if title.startswith("GFN - "):
-                    title = title[6:]
+                title = strip_source_title_prefix(title)
             elif "flatpak" in exec_line:
                 runner = "flatpak"
             elif "Emulator" in _categories(fields) or "retroarch" in exec_line:

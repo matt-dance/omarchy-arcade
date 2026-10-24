@@ -35,6 +35,24 @@ done
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Patterns such as `-- BEGIN matt-dance.arcade` start with `--`. Without this,
+# GNU grep treats the pattern as an option (`grep: unrecognized option '-- BEGIN …'`).
+file_contains() {
+  local file="$1" pat="$2"
+  [[ -f "$file" ]] && grep -Fq -- "$pat" "$file"
+}
+
+refresh_integrations() {
+  # `omarchy menu refresh` is documented but often missing as an IPC method;
+  # on a real host it prints a bare `unknown` to stdout. Swallow that.
+  if command -v omarchy >/dev/null 2>&1; then
+    omarchy menu refresh >/dev/null 2>&1 || true
+  fi
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl reload >/dev/null 2>&1 || true
+  fi
+}
+
 backup() {
   local file="$1"
   local bak="${file}.bak.$(date +%Y%m%d%H%M%S)"
@@ -95,7 +113,7 @@ EOF
     return
   fi
 
-  if grep -Fq "$HYPR_BEGIN" "$hyprland"; then
+  if file_contains "$hyprland" "$HYPR_BEGIN"; then
     if (( DRY_RUN )); then
       echo "would refresh managed block in ${hyprland}"
       return
@@ -109,12 +127,12 @@ EOF
       !skip { print }
     ' "$hyprland" >"$tmp"
     # If markers were unpaired, just append
-    if ! grep -Fq "$HYPR_BEGIN" "$tmp"; then
+    if ! file_contains "$tmp" "$HYPR_BEGIN"; then
       printf '\n%s\n' "$require_block" >>"$tmp"
     fi
     mv "$tmp" "$hyprland"
     echo "updated managed block in ${hyprland}"
-  elif grep -Eq 'hypr\.arcade|arcade\.lua' "$hyprland"; then
+  elif grep -Eq -- 'hypr\.arcade|arcade\.lua' "$hyprland"; then
     echo "note: ${hyprland} already references arcade — left unchanged"
   else
     if (( DRY_RUN )); then
@@ -172,7 +190,7 @@ install_menu() {
     return
   fi
 
-  if grep -Fq "$BEGIN_MARK" "$dest"; then
+  if file_contains "$dest" "$BEGIN_MARK"; then
     if (( DRY_RUN )); then
       echo "would refresh managed menu block in ${dest}"
       return
@@ -226,12 +244,7 @@ install_hypr
 install_menu
 
 if (( ! DRY_RUN )); then
-  if command -v omarchy >/dev/null 2>&1; then
-    omarchy menu refresh 2>/dev/null || true
-  fi
-  if command -v hyprctl >/dev/null 2>&1; then
-    hyprctl reload 2>/dev/null || true
-  fi
+  refresh_integrations
   echo
   echo "Done. Open Arcade with Super+Ctrl+G, or Gaming › Arcade in the Omarchy menu."
   echo "Controller: Guide+Start (or Guide tap when idle)."

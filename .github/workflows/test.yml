@@ -16,9 +16,10 @@ jobs:
         run: |
           export PYTHONPATH="$PWD"
           python3 -m unittest discover -s tests -v
+          bash tests/test-install.sh
       - name: Manifest sanity
         run: |
-          python3 -c 'import json; m=json.load(open("manifest.json")); assert m["id"]=="matt-dance.arcade"; assert "overlay" in m["kinds"]'
+          python3 -c 'import json; m=json.load(open("manifest.json")); assert m["id"]=="matt-dance.arcade"; assert "overlay" in m["kinds"]; assert "panel" not in m["kinds"]'
       - name: No symlinks
         run: |
           if find . -type l -not -path './.git/*' | grep -q .; then

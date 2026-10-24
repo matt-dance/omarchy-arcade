@@ -9,6 +9,11 @@ import "ArcadeModel.js" as Model
 
 // Fullscreen Arcade library overlay.
 // Summon: omarchy-shell shell toggle matt-dance.arcade '{}'
+//
+// The in-game Quick Menu lives here as a child surface. Omarchy's host
+// prefers kind "panel" over "overlay" when both are declared, so Arcade
+// does not register a panel entry point — otherwise this bind would open
+// QuickMenu.qml instead of the library.
 Item {
   id: root
 
@@ -25,6 +30,9 @@ Item {
   property var visibleGames: []
   property string statusText: "Scanning library…"
   property bool showCheatSheet: false
+  property bool playOnOpen: false
+  property var playOnChoices: []
+  property int playOnIndex: 0
 
   readonly property color background: Commons.Color.menu.background
   readonly property color foreground: Commons.Color.menu.text
@@ -40,6 +48,20 @@ Item {
   readonly property int gridGap: Style.space(Math.round(16 * uiScale))
 
   function open(payloadJson) {
+    var payload = {}
+    try {
+      if (payloadJson && String(payloadJson).length)
+        payload = JSON.parse(payloadJson)
+    } catch (e) {
+      payload = {}
+    }
+    if (payload && payload.surface === "quickmenu") {
+      root.showQuickMenu(payloadJson)
+      return
+    }
+    if (quickMenu && quickMenu.opened)
+      quickMenu.close()
+    root.playOnOpen = false
     root.opened = true
     root.screen = "home"
     root.filterText = ""
@@ -102,12 +124,54 @@ Item {
     if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
       return
     var game = root.visibleGames[root.selectedIndex]
+    var choices = Model.playOnChoices(game)
+    if (choices.length > 1) {
+      root.playOnChoices = choices
+      root.playOnIndex = 0
+      root.playOnOpen = true
+      return
+    }
     if (root.service && typeof root.service.launchGame === "function")
       root.service.launchGame(game)
   }
 
+  function launchPlayOnChoice() {
+    if (!root.playOnOpen || root.playOnIndex < 0 || root.playOnIndex >= root.playOnChoices.length)
+      return
+    var choice = root.playOnChoices[root.playOnIndex]
+    root.playOnOpen = false
+    if (root.service && typeof root.service.launchGame === "function")
+      root.service.launchGame(choice)
+  }
+
+  // Host `shell call matt-dance.arcade <method>` hits this overlay item, not Service.qml.
+  function rescan(payloadJson) {
+    if (root.service && typeof root.service.rescan === "function")
+      return root.service.rescan(payloadJson)
+    return "unknown"
+  }
+
+  function showQuickMenu(payloadJson) {
+    if (quickMenu) {
+      quickMenu.open(payloadJson || "{}")
+      return "ok"
+    }
+    return "unknown"
+  }
+
+  function status() {
+    if (root.service && typeof root.service.status === "function")
+      return root.service.status()
+    return "{}"
+  }
+
   function handleIntent(name) {
     if (!root.opened) return
+    if (root.playOnOpen) {
+      if (name === "accept") root.launchPlayOnChoice()
+      else if (name === "back") root.playOnOpen = false
+      return
+    }
     if (name === "accept") root.activateSelected()
     else if (name === "back") {
       if (root.filterText) root.filterText = ""
@@ -137,6 +201,15 @@ Item {
     function onLibraryChanged() { root.refreshList() }
     function onNav(dir, repeat) {
       if (!root.opened) return
+      if (root.playOnOpen) {
+        var n = root.playOnChoices.length
+        if (!n) return
+        if (dir === "up" || dir === "left")
+          root.playOnIndex = (root.playOnIndex - 1 + n) % n
+        else if (dir === "down" || dir === "right")
+          root.playOnIndex = (root.playOnIndex + 1) % n
+        return
+      }
       if (dir === "up") root.moveSelection(0, -1)
       else if (dir === "down") root.moveSelection(0, 1)
       else if (dir === "left") root.moveSelection(-1, 0)
@@ -346,7 +419,7 @@ Item {
                 }
               }
 
-              // Source badge
+              // Source badge (or "Play on…" when the same title exists on multiple stores)
               Rectangle {
                 anchors.left: parent.left
                 anchors.top: parent.top
@@ -358,7 +431,9 @@ Item {
                 Text {
                   id: badgeLabel
                   anchors.centerIn: parent
-                  text: Model.sourceLabel(modelData.source)
+                  text: (modelData.alsoOn && modelData.alsoOn.length)
+                        ? "Play on…"
+                        : Model.sourceLabel(modelData.source)
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -432,6 +507,22 @@ Item {
         focus: true
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (root.playOnOpen) {
+            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+              root.playOnOpen = false; event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.launchPlayOnChoice(); event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K || event.key === Qt.Key_Left || event.key === Qt.Key_H) {
+              var n = root.playOnChoices.length
+              if (n) root.playOnIndex = (root.playOnIndex - 1 + n) % n
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Right || event.key === Qt.Key_L) {
+              var m = root.playOnChoices.length
+              if (m) root.playOnIndex = (root.playOnIndex + 1) % m
+              event.accepted = true
+            }
+            return
+          }
           if (event.key === Qt.Key_Escape) {
             if (root.filterText) {
               root.filterText = ""
@@ -483,6 +574,86 @@ Item {
           }
         }
       }
+
+      // Play on… picker (same title from two stores)
+      Rectangle {
+        anchors.fill: parent
+        visible: root.playOnOpen
+        color: Qt.rgba(0, 0, 0, 0.45)
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.playOnOpen = false
+        }
+
+        Rectangle {
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(80), Style.space(420))
+          height: playOnColumn.implicitHeight + Style.spacing.panelPadding * 2
+          radius: root.cornerRadius
+          color: root.background
+          border.color: Commons.Color.menu.border
+          border.width: 1
+
+          ColumnLayout {
+            id: playOnColumn
+            anchors.fill: parent
+            anchors.margins: Style.spacing.panelPadding
+            spacing: Style.spacing.sm
+
+            Text {
+              text: "Play on…"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+            }
+            Repeater {
+              model: root.playOnChoices
+              Rectangle {
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true
+                Layout.preferredHeight: Style.space(44)
+                radius: root.cornerRadius
+                color: index === root.playOnIndex ? root.selectedBackground : "transparent"
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.controlPaddingX
+                  text: modelData.label || Model.sourceLabel(modelData.source)
+                  color: index === root.playOnIndex ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: root.playOnIndex = index
+                  onClicked: {
+                    root.playOnIndex = index
+                    root.launchPlayOnChoice()
+                  }
+                }
+              }
+            }
+            Text {
+              text: "A / Enter  play   ·   B / Esc  back"
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
     }
+  }
+
+  QuickMenu {
+    id: quickMenu
+    shell: root.shell
+    manifest: root.manifest
+    pluginRegistry: root.pluginRegistry
+    service: root.service
   }
 }

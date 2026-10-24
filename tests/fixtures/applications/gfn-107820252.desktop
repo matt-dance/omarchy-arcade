@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GFN - Enshrouded
+Comment=Steam
+Exec=bash /home/user/.config/omarchy/plugins/matt-dance.gfn-omarchy/scripts/gfn-play.sh --cms-id 107820252 --parent-game-id enshrouded --title Enshrouded
+Icon=/home/user/.local/share/icons/gfn/gfn-107820252.png
+Categories=Game;
+X-Omarchy-Plugin=matt-dance.gfn-omarchy
+X-GFN-CmsId=107820252
+X-GFN-ParentGameId=enshrouded
+X-GFN-AppStore=Steam

@@ -7,11 +7,10 @@
   "license": "MIT",
   "description": "Controller-first game library for Omarchy — Steam, Heroic, Lutris, Bottles, itch, Flatpak, GeForce NOW, RetroArch.",
   "preview": "preview.png",
-  "kinds": ["overlay", "panel", "service"],
+  "kinds": ["overlay", "service"],
   "keepLoaded": true,
   "entryPoints": {
     "overlay": "Arcade.qml",
-    "panel": "QuickMenu.qml",
     "service": "Service.qml"
   }
 }
