@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
@@ -33,6 +34,17 @@ Item {
   property bool playOnOpen: false
   property var playOnChoices: []
   property int playOnIndex: 0
+  property var localGames: []
+  property var localScanErrors: []
+  property bool localScanPending: false
+  property string localScanError: ""
+
+  readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
+  readonly property string libraryFile: Model.libraryFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_CACHE_HOME") || ""
+  )
+  readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
 
   readonly property color background: Commons.Color.menu.background
   readonly property color foreground: Commons.Color.menu.text
@@ -66,13 +78,11 @@ Item {
     root.screen = "home"
     root.filterText = ""
     root.selectedIndex = 0
+    root.loadLibraryFromDisk()
     root.refreshList()
-    if (root.service) {
-      if (typeof root.service.setUiMode === "function")
-        root.service.setUiMode(true)
-      if (!root.service.games || root.service.games.length === 0)
-        root.service.rescan()
-    }
+    root.ensureLibrary()
+    if (root.service && typeof root.service.setUiMode === "function")
+      root.service.setUiMode(true)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -88,8 +98,60 @@ Item {
       root.shell.hide(Model.pluginId(root.manifest))
   }
 
+  function libraryGames() {
+    return Model.resolvedGames(root.service, root.localGames)
+  }
+
+  function loadLibraryFromDisk() {
+    var text = ""
+    try {
+      text = libraryView.text()
+    } catch (e2) {
+      text = ""
+    }
+    var parsed = Model.parseLibraryText(text)
+    root.localGames = parsed.games
+    root.localScanErrors = parsed.errors
+    if (!parsed.ok)
+      root.localScanError = parsed.error || "library.json parse failed"
+    console.warn("matt-dance.arcade: overlay cache " + root.libraryFile + " games=" + root.localGames.length
+                 + " service=" + (root.service ? "yes" : "no"))
+    root.refreshList()
+  }
+
+  function startLocalScan() {
+    if (localScanProcess.running)
+      return
+    root.localScanPending = true
+    root.localScanError = ""
+    localScanProcess.command = ["/usr/bin/python3", root.scanBin, "--plugin-dir", root.pluginDir]
+    console.warn("matt-dance.arcade: overlay starting arcade-scan " + root.scanBin)
+    localScanProcess.running = true
+  }
+
+  function ensureLibrary() {
+    if (root.libraryGames().length)
+      return
+    if (root.service && typeof root.service.rescan === "function")
+      root.service.rescan()
+    root.startLocalScan()
+  }
+
+  function launchResolved(game) {
+    if (root.service && typeof root.service.launchGame === "function")
+      return root.service.launchGame(game)
+    var argv = Model.launchArgv(game)
+    if (!argv) {
+      console.warn("matt-dance.arcade: cannot launch, no command and no service")
+      return false
+    }
+    console.warn("matt-dance.arcade: launching without service: " + argv.join(" "))
+    Quickshell.execDetached(argv)
+    return true
+  }
+
   function refreshList() {
-    var games = (root.service && root.service.games) ? root.service.games : []
+    var games = root.libraryGames()
     if (root.screen === "home" && !root.filterText)
       root.visibleGames = Model.recentGames(games, 24)
     else
@@ -97,10 +159,13 @@ Item {
     if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
     var n = games.length
-    if (root.service && root.service.lastAction === "scan:pending")
+    var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
+    if (scanning && n === 0)
       root.statusText = "Scanning library…"
     else if (n === 0)
       root.statusText = "No games found — install Steam, Heroic, or add .desktop games"
+    else if (!root.service)
+      root.statusText = n + " games (cached) · service not loaded — omarchy-restart-shell"
     else if (root.screen === "home")
       root.statusText = "Recently played · " + n + " games total"
     else
@@ -131,8 +196,7 @@ Item {
       root.playOnOpen = true
       return
     }
-    if (root.service && typeof root.service.launchGame === "function")
-      root.service.launchGame(game)
+    root.launchResolved(game)
   }
 
   function launchPlayOnChoice() {
@@ -140,15 +204,15 @@ Item {
       return
     var choice = root.playOnChoices[root.playOnIndex]
     root.playOnOpen = false
-    if (root.service && typeof root.service.launchGame === "function")
-      root.service.launchGame(choice)
+    root.launchResolved(choice)
   }
 
   // Host `shell call matt-dance.arcade <method>` hits this overlay item, not Service.qml.
   function rescan(payloadJson) {
     if (root.service && typeof root.service.rescan === "function")
       return root.service.rescan(payloadJson)
-    return "unknown"
+    root.startLocalScan()
+    return "ok"
   }
 
   function showQuickMenu(payloadJson) {
@@ -194,6 +258,11 @@ Item {
       root.refreshList()
     } else if (name === "page_down") root.moveSelection(0, 2)
     else if (name === "page_up") root.moveSelection(0, -2)
+  }
+
+  onServiceChanged: {
+    console.warn("matt-dance.arcade: overlay service=" + (root.service ? "attached" : "null"))
+    root.refreshList()
   }
 
   Connections {
@@ -329,7 +398,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live. SteamGridDB key (optional): ~/.config/omarchy/arcade/steamgriddb.key\n\nControllers connected: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : "starting") + "\n\nHARDWARE TEST NEEDED: controller navigation, Guide chords, game launch/return, idle inhibit."
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live. SteamGridDB key (optional): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -655,5 +724,40 @@ Item {
     manifest: root.manifest
     pluginRegistry: root.pluginRegistry
     service: root.service
+  }
+
+  FileView {
+    id: libraryView
+    path: root.libraryFile
+    watchChanges: true
+    onFileChanged: root.loadLibraryFromDisk()
+    onLoaded: root.loadLibraryFromDisk()
+  }
+
+  Process {
+    id: localScanProcess
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.localScanPending = false
+        root.loadLibraryFromDisk()
+      }
+    }
+    stderr: StdioCollector {
+      onStreamFinished: {
+        if (text && text.length)
+          root.localScanError = text.trim()
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.localScanPending = false
+      if (exitCode !== 0)
+        console.warn("matt-dance.arcade: overlay arcade-scan exited " + exitCode)
+      root.loadLibraryFromDisk()
+    }
+  }
+
+  Component.onCompleted: {
+    console.warn("matt-dance.arcade: overlay loaded; cache=" + root.libraryFile)
+    root.loadLibraryFromDisk()
   }
 }

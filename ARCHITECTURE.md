@@ -16,6 +16,7 @@ omarchy-shell (Quickshell, Qt 6, one long-lived process)
     │   ├── IdleInhibitor while Arcade is open or a tracked game runs
     │   └── FileView watches: arcade.toml, library sources, theme changes are automatic
     ├── Arcade.qml        kind: overlay   full-screen library on the overlay layer
+    │                     also reads library.json + runs arcade-scan if the service is absent
     └── QuickMenu.qml     in-game side sheet (child of Arcade.qml, not a plugin kind)
 
 bin/arcaded (Python 3 stdlib)

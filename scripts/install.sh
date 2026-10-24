@@ -248,4 +248,9 @@ if (( ! DRY_RUN )); then
   echo
   echo "Done. Open Arcade with Super+Ctrl+G, or Gaming › Arcade in the Omarchy menu."
   echo "Controller: Guide+Start (or Guide tap when idle)."
+  echo
+  echo "If this was an update (or Arcade showed no games after a failed service load),"
+  echo "restart the desktop shell so Service.qml and arcaded remount:"
+  echo "  omarchy-restart-shell"
+  echo "Then: journalctl --user -n 80 --grep matt-dance.arcade"
 fi

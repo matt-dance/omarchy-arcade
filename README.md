@@ -76,6 +76,36 @@ python3 bin/arcade-scan --json
 
 Library cache: `${XDG_CACHE_HOME:-~/.cache}/matt-dance.arcade/library.json`
 
+The overlay reads that file itself. If the service is missing, Arcade still shows the cached games and can scan/launch without it.
+
+## Recovering a dead service
+
+Omarchy keeps a loaded service instance across plugin file updates (`keepLoaded`). A service that **failed** to load (QML error) is not registered, but disable/enable does not always remount it, and there is no success log unless Arcade prints one.
+
+After updating Arcade, or if Super+Ctrl+G shows Home with an empty library while `library.json` has games, or `pgrep -a arcaded` is empty:
+
+```bash
+omarchy-restart-shell
+```
+
+That is the reliable recovery. Then:
+
+```bash
+journalctl --user -n 80 --grep matt-dance.arcade
+pgrep -a arcaded
+python3 ~/.config/omarchy/plugins/matt-dance.arcade/bin/arcade-scan --json | head
+```
+
+You should see journal lines like:
+
+- `matt-dance.arcade: service loaded; pluginDir=…`
+- `matt-dance.arcade: starting arcaded /usr/bin/python3 …/bin/arcaded …`
+- `matt-dance.arcade: arcaded starting pid=…`
+- `matt-dance.arcade: arcaded hello pid=…`
+- `matt-dance.arcade: overlay cache … games=5 service=yes`
+
+`omarchy plugin disable matt-dance.arcade` then `enable` is worth trying, but **restart the shell** if arcaded still does not appear. A hot-reload after a failed QML load is not enough.
+
 ## Default controller bindings
 
 Configured in `default/arcade.toml`. Override in `~/.config/omarchy/arcade/arcade.toml` (live reload). Set a binding to `false` to disable it.
@@ -166,9 +196,9 @@ qmllint -I "$OMARCHY_PATH/shell" Arcade.qml QuickMenu.qml Service.qml
 
 These cannot be fully verified in CI. On a real Omarchy host with a controller:
 
-1. **Plugin load** — `omarchy plugin validate` and enable; bar stays healthy
+1. **Plugin load** — `omarchy plugin validate` and enable; bar stays healthy; journal shows `service loaded` and `starting arcaded`
 2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live
-3. **Scan** — with Steam/Heroic/etc installed, games appear with covers
+3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search
 5. **Controller nav** — D-pad and stick move focus; A launches; B backs
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game

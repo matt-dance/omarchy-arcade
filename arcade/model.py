@@ -257,6 +257,30 @@ def merge_games(games: list[Game]) -> list[Game]:
     return result
 
 
+def parse_library_text(text: str | None) -> dict[str, Any]:
+    """Parse library.json text the same way the overlay fallback does."""
+    if not text or not str(text).strip():
+        return {"games": [], "errors": [], "ok": True, "empty": True}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return {"games": [], "errors": [], "ok": False, "empty": True, "error": str(exc)}
+    games = data.get("games") or []
+    return {
+        "games": games,
+        "errors": data.get("errors") or [],
+        "ok": True,
+        "empty": len(games) == 0,
+    }
+
+
+def resolved_games(service_games: list[Any] | None, local_games: list[Any] | None) -> list[Any]:
+    """Prefer an in-memory service library; fall back to the on-disk cache."""
+    if service_games:
+        return list(service_games)
+    return list(local_games or [])
+
+
 def write_library(path: Path, games: list[Game], errors: list[ScanError]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {

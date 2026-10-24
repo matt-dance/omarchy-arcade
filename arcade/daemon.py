@@ -417,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         # default: repo / install root
         plugin_dir = default_config_path().parent.parent
+    print(
+        f"matt-dance.arcade: arcaded starting pid={os.getpid()} plugin_dir={plugin_dir}",
+        file=sys.stderr,
+        flush=True,
+    )
     return ArcadeDaemon(plugin_dir=plugin_dir, exit_with_stdin=exit_with_stdin).run()
 
 
