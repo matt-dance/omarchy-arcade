@@ -1,0 +1,19 @@
+[input]
+modifier = "GUIDE"
+combo_window_ms = 45
+hold_ms = 800
+repeat_delay_ms = 400
+repeat_interval_ms = 110
+
+[sources]
+steam = true
+heroic = true
+desktop = true
+roms = false
+
+[bindings]
+"GUIDE + START" = { action = "arcade.toggle", description = "Arcade" }
+"GUIDE" = { action = "arcade.quick_menu", description = "Quick menu", tap = true }
+"GUIDE + B" = { action = "game.close", hold = true, description = "Close game" }
+"GUIDE + DPAD_UP" = { exec = "echo vol+", repeat = true, description = "Volume up" }
+"A" = { action = "arcade.toggle", description = "should not parse as UI only — ok for test" }

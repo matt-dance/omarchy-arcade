@@ -1,0 +1,30 @@
+{
+  // Omarchy Arcade menu extension (matt-dance.arcade).
+  //
+  // IMPORTANT: `omarchy plugin add` does NOT merge this file automatically.
+  // Prefer the install helper after enable:
+  //   bash scripts/install.sh
+  // Or merge by hand into ~/.config/omarchy/extensions/omarchy-menu.jsonc
+  // then: omarchy menu refresh
+
+  "gaming": {
+    "icon": "",
+    "label": "Gaming",
+    "description": "Play games",
+    "aliases": ["games", "arcade"]
+  },
+  "gaming.arcade": {
+    "icon": "󰊴",
+    "label": "Arcade",
+    "description": "Controller-first game library (plugin: matt-dance.arcade)",
+    "aliases": ["game mode", "big picture", "couch"],
+    "action": "omarchy-shell shell toggle matt-dance.arcade '{}'"
+  },
+  "gaming.arcade.rescan": {
+    "icon": "󰑓",
+    "label": "Rescan library",
+    "description": "Rescan Steam, Heroic, Lutris, Bottles, itch, desktop and RetroArch",
+    "aliases": ["arcade rescan", "refresh games"],
+    "action": "omarchy-shell shell call matt-dance.arcade rescan '{}'"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Fortnite": {
+    "title": "Fortnite",
+    "is_installed": false
+  },
+  "Egg": {
+    "app_name": "Egg",
+    "title": "Apex Legends",
+    "install_path": "/games/apex",
+    "is_installed": true
+  }
+}

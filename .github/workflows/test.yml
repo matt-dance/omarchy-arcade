@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: |
+          export PYTHONPATH="$PWD"
+          python3 -m unittest discover -s tests -v
+      - name: Manifest sanity
+        run: |
+          python3 -c 'import json; m=json.load(open("manifest.json")); assert m["id"]=="matt-dance.arcade"; assert "overlay" in m["kinds"]'
+      - name: No symlinks
+        run: |
+          if find . -type l -not -path './.git/*' | grep -q .; then
+            echo "symlinks are forbidden in Omarchy plugins" >&2
+            find . -type l -not -path './.git/*'
+            exit 1
+          fi

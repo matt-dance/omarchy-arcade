@@ -1,0 +1,57 @@
+#!/usr/bin/python3
+"""Scan installed games and write the Arcade library cache."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.config import load_config
+from arcade.model import write_library
+from arcade.paths import library_path
+from arcade.scanners import run_all
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Scan installed games for Omarchy Arcade")
+    parser.add_argument("--json", action="store_true", help="Print library JSON to stdout")
+    parser.add_argument("--out", type=Path, help="Write library JSON to this path")
+    parser.add_argument("--plugin-dir", type=Path, default=ROOT)
+    args = parser.parse_args(argv)
+
+    cfg = load_config(plugin_dir=args.plugin_dir)
+    games, errors = run_all(cfg)
+    out = args.out or library_path()
+    write_library(out, games, errors)
+
+    payload = {
+        "version": 1,
+        "count": len(games),
+        "errors": [e.to_dict() for e in errors],
+        "path": str(out),
+    }
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "version": 1,
+                    "games": [g.to_dict() for g in games],
+                    "errors": [e.to_dict() for e in errors],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print(json.dumps(payload, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

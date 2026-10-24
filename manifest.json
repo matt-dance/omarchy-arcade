@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "matt-dance.arcade",
+  "name": "Arcade",
+  "version": "0.1.0",
+  "author": "Matt Dance",
+  "license": "MIT",
+  "description": "Controller-first game library for Omarchy — Steam, Heroic, Lutris, Bottles, itch, Flatpak, GeForce NOW, RetroArch.",
+  "preview": "preview.png",
+  "kinds": ["overlay", "panel", "service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Arcade.qml",
+    "panel": "QuickMenu.qml",
+    "service": "Service.qml"
+  }
+}

@@ -1,0 +1,61 @@
+# Omarchy Arcade — default settings and controller bindings.
+# User overrides live in ~/.config/omarchy/arcade/arcade.toml and are merged
+# over this file. Edits reload live while arcaded is running.
+#
+# Binding syntax matches Omarchy's Hyprland binds: "GUIDE + A", "SELECT + START".
+# Buttons: A B X Y LB RB LT RT LS RS L3 R3 START SELECT GUIDE
+#          DPAD_UP DPAD_DOWN DPAD_LEFT DPAD_RIGHT
+# Actions: arcade.toggle | arcade.quick_menu | arcade.cheat_sheet
+#          game.close | game.focus | game.force_quit
+#          Or: exec = "command …"  /  keys = "SUPER + SPACE"
+
+[input]
+modifier = "GUIDE"
+combo_window_ms = 45
+hold_ms = 800
+repeat_delay_ms = 400
+repeat_interval_ms = 110
+ignore_steam_virtual_pad = "auto"
+auto_open_on_connect = false
+
+[ui]
+scale = 1.25
+open_on = "focused"
+glyphs = "auto"
+
+[launch]
+fullscreen = "auto"
+return_to_arcade = true
+idle_inhibit = true
+
+[sources]
+steam = true
+heroic = true
+legendary = true
+lutris = true
+bottles = true
+itch = true
+desktop = true
+retroarch = true
+roms = false
+moonlight = false
+
+[art]
+steamgriddb_key_file = "~/.config/omarchy/arcade/steamgriddb.key"
+
+[bindings]
+"GUIDE + START" = { action = "arcade.toggle", description = "Arcade" }
+"GUIDE" = { action = "arcade.quick_menu", description = "Quick menu / Arcade", tap = true }
+"GUIDE + B" = { action = "game.close", hold = true, description = "Close game" }
+"GUIDE + DPAD_UP" = { exec = "omarchy-audio-output-volume raise", repeat = true, description = "Volume up" }
+"GUIDE + DPAD_DOWN" = { exec = "omarchy-audio-output-volume lower", repeat = true, description = "Volume down" }
+"GUIDE + DPAD_LEFT" = { exec = "hyprctl dispatch workspace e-1", description = "Previous workspace" }
+"GUIDE + DPAD_RIGHT" = { exec = "hyprctl dispatch workspace e+1", description = "Next workspace" }
+"GUIDE + RB" = { exec = "omarchy-capture-screenshot", description = "Screenshot" }
+"GUIDE + LB" = { exec = "omarchy-capture-screenrecording", description = "Record" }
+"GUIDE + Y" = { keys = "SHIFT_R + F12", description = "Performance overlay" }
+"GUIDE + X" = { keys = "SUPER + SPACE", description = "Omarchy menu" }
+"GUIDE + A" = { action = "game.focus", description = "Focus game" }
+"GUIDE + R3" = { exec = "omarchy-audio-input-mute", description = "Mute mic" }
+"GUIDE + SELECT" = { action = "arcade.cheat_sheet", description = "Bindings" }
+"GUIDE + SELECT + START" = { action = "game.force_quit", hold = true, hold_ms = 2000, description = "Emergency exit" }

@@ -1,6 +1,6 @@
 # Omarchy Arcade: Plan
 
-Status: **planning, awaiting approval**. No implementation code exists yet. This file covers what we build, the stack, the default bindings, the milestones, and the decisions still open. [`ARCHITECTURE.md`](ARCHITECTURE.md) covers how it is built. [`COMPETITIVE_ANALYSIS.md`](COMPETITIVE_ANALYSIS.md) covers what already exists and why we build rather than wrap.
+Status: **approved and in implementation**. M0/M1 MVP and M2 scanners are in-tree; see [`README.md`](README.md). Decisions on all open questions are locked in §9. [`ARCHITECTURE.md`](ARCHITECTURE.md) covers how it is built. [`COMPETITIVE_ANALYSIS.md`](COMPETITIVE_ANALYSIS.md) covers what already exists and why we build rather than wrap.
 
 ## 1. What it is
 
@@ -16,7 +16,7 @@ Why not "Game Mode":
 - `silvaio.gamemode` ("Game Mode Switcher") is already the top-ranked Omarchy gaming plugin. It is a desktop-optimization toggle, not a library. Using the same name would confuse users of both, and we want to integrate with it (see §7).
 - "Arcade" says "a place where you pick a game and play". It is short, and it reads well in the Omarchy menu as Gaming › Arcade.
 
-Alternatives if you prefer: **Couch**, **Lounge**, **Playdeck**. This is open question Q1.
+**Decision (locked):** Omarchy Arcade / `matt-dance.arcade`.
 
 ### Non-goals
 
@@ -314,16 +314,18 @@ Prove the four risky seams before building UI.
 | SteamGridDB terms and rate limits | Low | The user's own key, caching, and a polite request rate |
 | Multi-monitor and TV focus quirks | Low | `open_on` setting; tested in M5 |
 
-## 9. Open questions for you
+## 9. Decisions (locked)
 
-1. **Q1. Name.** Is "Omarchy Arcade" (`matt-dance.arcade`) OK, or do you want Couch, Lounge, Playdeck, or to keep "Game Mode"?
-2. **Q2. Python helper.** Do you accept a Python-stdlib daemon (no build, matching Controller Control), or do you want Rust with SDL3, which means shipping or building binaries for x86 and aarch64?
-3. **Q3. Controller Control.** Should we build our own chord engine (recommended: we need UI intents, not just key injection) or depend on Controller Control and contribute "intent" output upstream?
-4. **Q4. Keyboard launch bind.** Is `SUPER + CTRL + G` OK? It's free in Omarchy but suggested by Game Mode Switcher.
-5. **Q5. Guide-tap behavior.** Should tapping Guide open the Quick Menu, which is Steam-like but collides with Steam's own Guide handling, or should only chords be global, leaving a bare Guide press to Steam?
-6. **Q6. SteamGridDB.** Is "bring your own key" acceptable (free account), or do you want art limited to local caches plus typographic cards?
-7. **Q7. GeForce NOW scope.** Should Arcade only show titles added through your GFN plugin (reliable), or also attempt to read the GFN client's own library cache from its Flatpak data (as Klay does; fragile and undocumented)?
-8. **Q8. Auto-open.** Should Arcade open automatically when a controller connects, or only on a chord or bind?
-9. **Q9. Session style.** Should games launch on the current workspace (recommended) or on a dedicated "Arcade" workspace that is restored afterwards?
-10. **Q10. Emulation depth.** Should we stop at RetroArch playlists and ROM folders (M4), or also support standalone emulators (Dolphin, PCSX2, RPCS3, Cemu) with per-system defaults?
-11. **Q11. Distribution.** Should this be one repo under your account, `matt-dance/omarchy-arcade`, and should GFN integration stay optional (reads files if present) instead of a hard dependency?
+| # | Topic | Decision |
+|---|---|---|
+| Q1 | Name | **Omarchy Arcade** (`matt-dance.arcade`) |
+| Q2 | Helper language | **Python stdlib**, no compile step |
+| Q3 | Combo engine | **Build our own** |
+| Q4 | Keyboard bind | **`Super + Ctrl + G`** |
+| Q5 | Guide tap | **Opens the Arcade quick menu** (or Arcade when idle) |
+| Q6 | SteamGridDB | **Optional**, user's own key; fall back to local art |
+| Q7 | GeForce NOW | **Only** titles added through the GFN Menu plugin |
+| Q8 | Auto-open on connect | **Off by default**, config option |
+| Q9 | Workspace | Games launch on the **current workspace** |
+| Q10 | Emulation | **RetroArch + ROM folders only** |
+| Q11 | Distribution | Repo **omarchy-arcade**, GFN integration **optional** |

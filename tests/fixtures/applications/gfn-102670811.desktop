@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GFN - Diablo IV
+Comment=Steam
+Exec=bash /home/user/.config/omarchy/plugins/matt-dance.gfn-omarchy/scripts/gfn-play.sh --cms-id 102670811 --parent-game-id d32c9410-62cb-45cf-9c53-740bb92d4a2d --title Diablo IV
+Icon=/home/user/.local/share/icons/gfn-diablo-iv.png
+Categories=Game;
+X-Omarchy-Plugin=matt-dance.gfn-omarchy
+X-GFN-CmsId=102670811
+X-GFN-ParentGameId=d32c9410-62cb-45cf-9c53-740bb92d4a2d
+X-GFN-AppStore=Steam
