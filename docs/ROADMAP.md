@@ -45,7 +45,7 @@ closes the tracked window. Force quit kills the tracked pids. Launch errors
 reset the session. The system menu hides Close game / Force quit when nothing
 is running.
 
-**Status: Done (PR A, session tracking).**
+**Status: Done in [#6](https://github.com/matt-dance/omarchy-arcade/pull/6) (PR A, session tracking).**
 
 ## 2. Play history for every game, not only Steam (feature, high)
 
@@ -57,11 +57,11 @@ history, but nothing writes it.
 
 **Change.** `arcade/state.py` owns `${XDG_STATE_HOME}/matt-dance.arcade/state.json`.
 The daemon records `lastPlayed` on every launch and adds the session's seconds
-on exit. `arcade-scan` merges the newest `lastPlayed` (and Arcade playtime
-when the store has none) into `library.json`, and the overlay overlays the
-same file live so the Home row reorders as soon as you come back from a game.
+on exit. The overlay reads the same file live and merges it into the library
+(the later `lastPlayed` and the larger playtime win), so the Home row reorders
+as soon as you come back from a game. `library.json` is left as the scan wrote it.
 
-**Status: Done (PR C, library state).**
+**Status: Done in [#8](https://github.com/matt-dance/omarchy-arcade/pull/8) (PR C, library state).**
 
 ## 3. Controller navigation: hold-to-repeat and the left stick (UX, high)
 
@@ -82,7 +82,7 @@ service watches `arcade.toml` and sends `reload`. While you scroll, the
 overlay waits a moment before fetching metadata, so holding right does not
 start a stream of `arcade-meta` processes.
 
-**Status: Done (PR B, controller navigation).**
+**Status: Done in [#7](https://github.com/matt-dance/omarchy-arcade/pull/7) (PR B, controller navigation).**
 
 ## 4. Search that works from a controller (UX, high)
 
@@ -94,12 +94,12 @@ launch a result without the mouse. Typing `s` to start a search is swallowed
 by a dead `Key_S` branch.
 
 **Change.** An on-screen keyboard (`Osk.qml`) opens on `Y` when the request
-came from a pad: D-pad to move, A to type, X backspace, Y space, B or Start to
-close. Results update live and you can navigate them right away. The search
+came from a pad: D-pad to move, A to type, X backspace, Y space, Start to keep
+the results, B to cancel. Results update live and you can navigate them right away. The search
 field forwards navigation keys to the same handler as the rest of the
 overlay. The `s` key starts a search like any other letter.
 
-**Status: Done (PR B, controller navigation).**
+**Status: Done in [#7](https://github.com/matt-dance/omarchy-arcade/pull/7) (PR B, controller navigation).**
 
 ## 5. Favorites, hide, sort and filter (feature, high)
 
@@ -110,12 +110,12 @@ title. Options (X) only opens the Play on… picker, and only for merged titles.
 
 **Change.** A per-game **Options** sheet (X) with Play on…, Favorite, Hide
 and Refresh metadata. R3 toggles favorite and Select cycles the Library sort
-(A–Z, Recently played, Most played, Source). A filter row (All, Favorites,
-Steam, GeForce NOW, …, Hidden) is reachable with LT/RT. Home order becomes
-recently played, then favorites, then the rest. All of this lives in
+(Recently played, A–Z, Most played, Store). LB/RB step through tabs after
+Home (All games, Favorites, one per store, Hidden), leaving LT/RT for paging.
+Home order becomes recently played, then favorites, then the rest. All of this lives in
 `state.json`, so it survives rescans and cache wipes.
 
-**Status: Done (PR C, library state).**
+**Status: Done in [#8](https://github.com/matt-dance/omarchy-arcade/pull/8) (PR C, library state).**
 
 ## 6. In-app setup for IGDB and SteamGridDB keys (feature, medium-high)
 
@@ -136,7 +136,7 @@ one-time Home card on first run points to it, and the system menu gets an
 metadata that was fetched without a provider that is now configured is
 refreshed instead of waiting 14 days. Everything still works with no keys.
 
-**Status: Done (PR D, API keys).**
+**Status: Done in [#9](https://github.com/matt-dance/omarchy-arcade/pull/9) (PR D, API keys).** The sheet opens from Settings (Start → A) rather than being inline in the Settings page.
 
 ## 7. Per-game launch options (feature, medium)
 
@@ -158,8 +158,8 @@ Every Home and Library delegate calls `Model.lookupMeta`, `coverUrl` and
 (one copy per `--cached-art` payload), cache the resolved cover per delegate
 in a property, and keep the noisy log behind a debug flag.
 
-**Status: Partly done.** PR B debounces metadata fetches while scrolling, and
-PR C stops logging on every list refresh. Memoizing the delegates is planned.
+**Status: Partly done.** [#7](https://github.com/matt-dance/omarchy-arcade/pull/7) debounces metadata fetches while scrolling, and
+[#8](https://github.com/matt-dance/omarchy-arcade/pull/8) logs the list refresh only when the counts change. Memoizing the delegates is planned.
 
 ## 9. Show scan errors and source counts in Settings (UX, medium)
 
