@@ -254,6 +254,31 @@ class TestOverlayKeys(unittest.TestCase):
         self.assertIn("echoMode: TextInput.Password", qml)
         self.assertIn('root.runKeys(["set", row.id], value + "\\n")', qml)
 
+    def test_system_menu_opens_keys_with_explicit_summon(self):
+        qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
+        service = (ROOT / "Service.qml").read_text(encoding="utf-8")
+        fn = qml[qml.index("function showKeysFromMenu()"):]
+        fn = fn[: fn.index("\n  }\n")]
+        self.assertIn('"summon"', fn)
+        self.assertNotIn("toggle", fn)
+        self.assertIn("keysSheetWanted = true", fn)
+        self.assertIn("property bool keysSheetWanted", service)
+        self.assertIn('payload.surface === "keys"', qml)
+
+    def test_menu_rows_show_hints(self):
+        menu = (ROOT / "QuickMenu.qml").read_text(encoding="utf-8")
+        self.assertIn("text: modelData.hint", menu)
+
+    def test_keys_rows_ignore_resting_pointer(self):
+        qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
+        self.assertNotIn("onEntered: root.keysIndex", qml)
+        self.assertIn("function pointerMoved(scenePos)", qml)
+
+    def test_first_status_read_is_not_a_change(self):
+        qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
+        self.assertIn("var known = root.keyStatus.file !== undefined", qml)
+        self.assertIn("if (known && ", qml)
+
     def test_keys_json_is_gitignored(self):
         self.assertIn("keys.json", (ROOT / ".gitignore").read_text(encoding="utf-8").split())
         example = json.loads((ROOT / "keys.example.json").read_text(encoding="utf-8"))
