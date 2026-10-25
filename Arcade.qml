@@ -52,6 +52,8 @@ Item {
   property string optionsTitle: ""
   property string lastListLog: ""
   property bool pendingMetaForce: false
+  property string selectedGameId: ""
+  property var tabSelection: ({})
   property point lastPointer: Qt.point(-1, -1)
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
@@ -134,7 +136,8 @@ Item {
     root.opened = true
     root.screen = "home"
     root.filterText = ""
-    root.selectedIndex = 0
+    root.resetSelection()
+    root.tabSelection = {}
     root.lastPointer = Qt.point(-1, -1)
     root.focusZone = "shelf"
     root.detailButton = 0
@@ -236,7 +239,7 @@ Item {
   function cycleSort() {
     root.sortMode = Model.nextSort(root.sortMode)
     root.libraryState.sort = root.sortMode
-    root.selectedIndex = 0
+    root.resetSelection()
     root.refreshList()
     root.runStateCommand(["sort", root.sortMode])
   }
@@ -261,17 +264,38 @@ Item {
     var next = pos + delta
     if (root.screen !== "library" && delta < 0)
       next = tabs.length - 1
-    if (next < 0 || next >= tabs.length) {
-      root.screen = "home"
-    } else {
-      root.screen = "library"
-      root.libraryTab = tabs[next].id
+    if (next < 0 || next >= tabs.length)
+      root.showTab("home", root.libraryTab)
+    else
+      root.showTab("library", tabs[next].id)
+  }
+
+  function tabKey() {
+    return root.screen === "home" ? "home" : (root.screen === "library" ? "library:" + root.libraryTab : "")
+  }
+
+  // Each tab remembers which game was focused, by id, so coming back lands
+  // on the same game even if the list reordered meanwhile.
+  function showTab(screen, tabId) {
+    var key = root.tabKey()
+    if (key && root.selectedGameId) {
+      var memory = root.tabSelection
+      memory[key] = root.selectedGameId
+      root.tabSelection = memory
     }
+    root.screen = screen
+    root.libraryTab = tabId
     root.filterText = ""
-    root.selectedIndex = 0
+    root.resetSelection()
+    root.selectedGameId = root.tabSelection[root.tabKey()] || ""
     root.focusZone = "shelf"
     root.detailButton = 0
     root.refreshList()
+  }
+
+  function resetSelection() {
+    root.selectedIndex = 0
+    root.selectedGameId = ""
   }
 
   // Hover only counts when the pointer really moved. A sheet or list that
@@ -333,17 +357,7 @@ Item {
   }
 
   function refreshKeepingFocus() {
-    var current = root.focusedGameOrNull()
     root.refreshList()
-    if (!current)
-      return
-    for (var i = 0; i < root.visibleGames.length; i++) {
-      if (root.visibleGames[i].id === current.id) {
-        if (i !== root.selectedIndex)
-          root.selectedIndex = i
-        return
-      }
-    }
   }
 
   function refreshList() {
@@ -357,7 +371,18 @@ Item {
       root.visibleGames = Model.sortGames(Model.tabGames(games, root.libraryTab), root.sortMode)
     else
       root.visibleGames = Model.filterGames(games, root.filterText)
-    if (root.selectedIndex >= root.visibleGames.length)
+    var keepIndex = -1
+    if (root.selectedGameId) {
+      for (var i = 0; i < root.visibleGames.length; i++) {
+        if (String(root.visibleGames[i].id) === root.selectedGameId) {
+          keepIndex = i
+          break
+        }
+      }
+    }
+    if (keepIndex >= 0)
+      root.selectedIndex = keepIndex
+    else if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
     root.updateFocused()
     var cacheN = root.localGames ? root.localGames.length : 0
@@ -391,6 +416,8 @@ Item {
       root.focusedGame = root.visibleGames[root.selectedIndex]
     else
       root.focusedGame = null
+    if (root.focusedGame)
+      root.selectedGameId = String(root.focusedGame.id)
     root.loadMetaFromDisk()
     root.ensureMeta(root.focusedGame)
   }
@@ -1258,11 +1285,7 @@ Item {
               }
               MouseArea {
                 anchors.fill: parent
-                onClicked: {
-                  root.libraryTab = parent.modelData.id
-                  root.selectedIndex = 0
-                  root.refreshList()
-                }
+                onClicked: root.showTab("library", parent.modelData.id)
               }
             }
           }
