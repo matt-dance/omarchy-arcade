@@ -153,16 +153,19 @@ Downloads are written to `${XDG_CACHE_HOME}/matt-dance.arcade/art/<id>/<slot>.<e
 ## Session tracker state machine
 
 ```text
-idle ──launch──▶ starting ──window seen / pid alive──▶ running ──exit detected──▶ returning ──▶ idle
-  ▲                 │ timeout 90 s with no window                  │ user closes game
-  └─────────────────┴──────────── notify "Game didn't start" ◀──────┘
+idle ──launch──▶ starting ──evidence seen──▶ running ──no evidence for 2 polls──▶ exited ──▶ returning ──▶ idle
+  ▲                 │ launcher exit ≠ 0 → exited (failed): "Couldn't start", return to Arcade
+  │                 │ no evidence after 180 s (hand-off) / 90 s → lost: stop tracking quietly
+  └─────────────────┘
 ```
 
-- **`starting`.** The overlay is hidden, idle is inhibited, and a toast reads "Launching …". On `GUIDE + B`, the launch is cancelled.
+- **`starting`.** The overlay is hidden, idle is inhibited, and a toast reads "Launching …".
+- **Evidence** (polled every 1.5 s by `arcade/session.py`, not on every daemon loop): a Hyprland client whose class matches `track.windowClass` (`steam_app_<id>`, a `.desktop` `StartupWMClass`, `GeForceNOW`) or `steam_app_<steamAppId>`; Steam's `reaper SteamLaunch AppId=<id>` process; the launch scope or direct child for in-place launches; and, as a last resort while starting, a window that appeared after launch and is not a launcher (Steam, Heroic, Lutris, …).
+- **Hand-off.** `uri` and `desktop` launches, `uwsm-app`, and scanners that set `track.handoff` return immediately while the game keeps running elsewhere. Their launcher exit code 0 means nothing. A non-zero exit code means the launch failed.
 - **`running`.** Global chords and the Quick Menu are active. Optionally the key-lock submap or the Game Mode Switcher performance session is on.
-- **Exit detection** is per source. The tracked pid set comes from the scope's `cgroup.procs`, read once on launch and refreshed on Hyprland `openwindow`, together with the window address. "Exited" means the scope is empty, or the hand-off pid has exited and the tracked window is closed.
+- **`lost`.** No evidence ever showed up (for example an unknown window class and the window was already open). Arcade stops tracking without "Game ended" and without re-summoning itself over the game.
 - **`returning`.** Arcade restores the workspace, re-summons the overlay, restores focus to the launched card, records playtime, and releases the inhibitor.
-- **Close game.** Arcade sends `closewindow` to the game's address. If it is still alive after 5 s, it shows a "Force quit?" prompt, which on confirmation sends `SIGTERM` and then `SIGKILL` to the scope (`systemctl --user kill`).
+- **Close game.** Arcade sends `closewindow` to the tracked window's address and `SIGTERM` to the launch scope. **Force quit** sends `SIGKILL` to the scope, the tracked window's pid, Steam's reaper for the app, and all their descendants.
 
 ## Input and chord engine
 

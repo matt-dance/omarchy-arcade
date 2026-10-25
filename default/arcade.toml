@@ -13,8 +13,11 @@
 modifier = "GUIDE"
 combo_window_ms = 45
 hold_ms = 800
+# Held D-pad / left stick repeat navigation in Arcade after this delay
 repeat_delay_ms = 400
 repeat_interval_ms = 110
+# Left stick navigates Arcade once tilted past this fraction of its range
+stick_deadzone = 0.35
 ignore_steam_virtual_pad = "auto"
 auto_open_on_connect = false
 

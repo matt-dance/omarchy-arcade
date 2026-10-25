@@ -22,6 +22,11 @@ Item {
     return base + "/matt-dance.arcade"
   }
   readonly property string libraryFile: root.cacheDir + "/library.json"
+  readonly property string userConfigFile: {
+    var xdg = Quickshell.env("XDG_CONFIG_HOME")
+    var home = Quickshell.env("HOME") || ""
+    return ((xdg && xdg.length) ? xdg : (home + "/.config")) + "/omarchy/arcade/arcade.toml"
+  }
   readonly property string daemonBin: root.pluginDir + "/bin/arcaded"
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
@@ -33,6 +38,7 @@ Item {
   property string lastError: ""
   property string sessionState: "idle"
   property var sessionGame: null
+  property string sessionWindow: ""
   property var pads: []
   property var configErrors: []
   property bool cheatSheetOpen: false
@@ -170,6 +176,7 @@ Item {
     if (force) {
       root.sessionState = "idle"
       root.sessionGame = null
+      root.sessionWindow = ""
       root.sessionChanged()
       root.returnToArcade()
     }
@@ -184,12 +191,19 @@ Item {
     Qt.callLater(function() {
       root.sessionState = "idle"
       root.sessionGame = null
+      root.sessionWindow = ""
       root.sessionChanged()
       root.refreshIdleInhibit()
     })
   }
 
   function focusGame() {
+    if (root.sessionWindow) {
+      Quickshell.execDetached([
+        "hyprctl", "dispatch", "focuswindow", "address:" + root.sessionWindow
+      ])
+      return
+    }
     var g = root.sessionGame
     if (!g || !g.track || !g.track.windowClass)
       return
@@ -332,13 +346,31 @@ Item {
       root.sessionChanged()
       root.refreshIdleInhibit()
     } else if (state === "running") {
+      root.log("session running game=" + (msg.game || "?") + " window=" + (msg.windowAddress || "-"))
       root.sessionState = "running"
+      root.sessionWindow = msg.windowAddress || ""
       root.sessionChanged()
       root.refreshIdleInhibit()
     } else if (state === "exited") {
       var title = (root.sessionGame && root.sessionGame.title) || "Game"
-      root.notifySend("Game ended", title)
+      root.log("session exited game=" + (msg.game || "?") + " reason=" + (msg.reason || "?")
+               + " seconds=" + (msg.seconds || 0) + " code=" + msg.exitCode)
+      if (msg.reason === "failed" || msg.reason === "no-window")
+        root.notifySend("Couldn't start", title)
+      else if (msg.reason !== "force")
+        root.notifySend("Game ended", title)
       root.returnToArcade()
+      root.refreshIdleInhibit()
+    } else if (state === "lost" || state === "failed") {
+      // No window or process ever showed up (or the launch was rejected).
+      // Stop tracking without claiming the game ended or covering it with Arcade.
+      root.log("session " + state + " game=" + (msg.game || "?") + " reason=" + (msg.reason || "?"))
+      if (state === "failed")
+        root.notifySend("Couldn't start", (root.sessionGame && root.sessionGame.title) || "")
+      root.sessionState = "idle"
+      root.sessionGame = null
+      root.sessionWindow = ""
+      root.sessionChanged()
       root.refreshIdleInhibit()
     }
   }
@@ -365,11 +397,63 @@ Item {
     root.startDaemon()
     root.loadLibraryFromDisk()
     root.rescan()
+    userConfigProbe.running = true
   }
 
   onManifestChanged: {
     root.log("manifest attached id=" + Model.pluginId(root.manifest))
     root.startDaemon()
+  }
+
+  // arcade.toml edits apply without restarting the shell.
+  FileView {
+    id: userConfigView
+    path: root.userConfigFile
+    watchChanges: true
+    onFileChanged: configReload.restart()
+  }
+
+  Timer {
+    id: configReload
+    interval: 300
+    repeat: false
+    onTriggered: {
+      root.log("arcade.toml changed — reloading bindings")
+      root.sendDaemon({ t: "reload" })
+      if (!userConfigProbe.running)
+        userConfigProbe.running = true
+    }
+  }
+
+  // FileView can't watch a file that doesn't exist yet. Until arcade.toml
+  // appears, check for it every few seconds and load it once it does.
+  property bool userConfigMissing: false
+
+  Process {
+    id: userConfigProbe
+    command: ["/usr/bin/test", "-e", root.userConfigFile]
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        userConfigPoll.stop()
+        if (root.userConfigMissing) {
+          root.userConfigMissing = false
+          root.log("arcade.toml created — loading bindings")
+          userConfigView.reload()
+          root.sendDaemon({ t: "reload" })
+        }
+      } else {
+        root.userConfigMissing = true
+        if (!userConfigPoll.running)
+          userConfigPoll.start()
+      }
+    }
+  }
+
+  Timer {
+    id: userConfigPoll
+    interval: 3000
+    repeat: true
+    onTriggered: if (!userConfigProbe.running) userConfigProbe.running = true
   }
 
   FileView {
@@ -450,6 +534,14 @@ Item {
     onExited: function(exitCode, exitStatus) {
       root.daemonReady = false
       root.log("arcaded exited code=" + exitCode + " status=" + exitStatus + " — will retry")
+      // A restarted daemon has no session; don't keep blocking launches.
+      if (root.sessionState !== "idle") {
+        root.sessionState = "idle"
+        root.sessionGame = null
+        root.sessionWindow = ""
+        root.sessionChanged()
+        root.refreshIdleInhibit()
+      }
       daemonRestart.interval = exitCode === 127 ? 1500 : 3000
       daemonRestart.restart()
     }

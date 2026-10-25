@@ -64,7 +64,8 @@ omarchy plugin remove matt-dance.arcade
 - **Favorites:** `R3` (F3) stars the focused game. Home shows recently played first, then favorites, then the rest
 - **Options (`X`):** Play / Play on… each store, Add to or Remove from favorites, Hide from library (unhide from the Hidden tab), Refresh metadata
 - **Play history:** Arcade records its own last-played time and playtime for every game it launches, so GeForce NOW, Battle.net/Wine and `.desktop` games also sort by recent play. Stored in `${XDG_STATE_HOME:-~/.local/state}/matt-dance.arcade/state.json`
-- **Search:** `Y` / `/` then type
+- **Search:** `Y` opens an on-screen keyboard (D-pad/stick to move, `A` types, `X` deletes, `Y` adds a space, `Start` keeps the results, `B` cancels). On a keyboard, `/` or just start typing; Enter launches the top result and Esc clears
+- **Held input:** holding the D-pad or tilting the left stick repeats focus moves (deadzone: `stick_deadzone` in `arcade.toml`). `LT` / `RT` page through the grid
 - **Settings:** `Start` / `M`
 - **Close Arcade:** `B` / Esc from the Home row
 - **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). The same menu opens from the desktop or while Arcade is already up via `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'`. Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
@@ -269,12 +270,12 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live
 3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
-5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
+5. **Controller nav** — D-pad and left stick move focus; holding either repeats after a short delay and stops on release; A launches; B backs; Home left/right along the shelf; `Y` opens the on-screen keyboard and typing filters live; editing `~/.config/omarchy/arcade/arcade.toml` logs `arcade.toml changed — reloading bindings`
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
 7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
 8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…` with no empty `JSON.parse` warning. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
 9. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
-10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
+10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~3s. Arcade must **not** reappear while a game is still running (Steam, GFN, World of Warcraft, Battle.net). Journal shows `session running game=…` once the window appears and `session exited … reason=closed` after quitting
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
 13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft (`wow.desktop` with `StartupWMClass=steam_app_battlenet` and a custom Exec) stays in the library; a small `wow.png` is centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
