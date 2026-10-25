@@ -107,6 +107,15 @@ class TestBuildMenuHidesMissing(unittest.TestCase):
             ["lock", "suspend", "reboot", "shutdown", "logout"],
         )
 
+    def test_no_session_hides_close_and_force(self):
+        items = build_menu({"tools": {}}, "")
+        self.assertIn("Game", _sections(items))
+        ids = _ids(items)
+        self.assertIn("arcade", ids)
+        for gone in ("resume", "close", "force"):
+            self.assertNotIn(gone, ids)
+        self.assertEqual(build_menu({"tools": {}}, None)[1]["label"], "Open Arcade")
+
     def test_volume_and_power_only_when_tooled(self):
         status = {
             "tools": {

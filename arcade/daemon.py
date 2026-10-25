@@ -225,10 +225,10 @@ class ArcadeDaemon:
             self._launch(msg)
         elif typ == "close":
             force = bool(msg.get("force"))
+            current = self.tracker.current
             self.tracker.close(force=force)
-            if self.tracker.current:
-                emit({"t": "session", **self.tracker.current.to_dict(), "state": self.tracker.current.state})
-            if force:
+            if force and current is not None:
+                emit({"t": "session", **current.to_dict()})
                 self.tracker.clear()
         elif typ == "ping":
             emit({"t": "pong"})
@@ -267,12 +267,14 @@ class ArcadeDaemon:
             self._load_library()
             game = self._games_by_id.get(game_id)
         if game is None:
+            emit({"t": "session", "game": game_id, "state": "failed", "reason": "unknown game"})
             emit({"t": "error", "error": f"unknown game {game_id!r}"})
             return
         try:
             session = self.tracker.launch(game)
             emit({"t": "session", **session.to_dict()})
         except Exception as exc:  # noqa: BLE001
+            emit({"t": "session", "game": game_id, "state": "failed", "reason": str(exc)})
             emit({"t": "error", "error": f"launch: {exc}"})
 
     def _load_library(self) -> None:
@@ -346,10 +348,11 @@ class ArcadeDaemon:
             for act in self.engine.tick(now):
                 self._handle_activation(act.binding, act.reason)
 
-            done = self.tracker.poll()
-            if done and done.state == "exited":
-                emit({"t": "session", **done.to_dict()})
-                self.tracker.clear()
+            changed = self.tracker.poll(now)
+            if changed is not None:
+                emit({"t": "session", **changed.to_dict()})
+                if changed.state in ("exited", "lost"):
+                    self.tracker.clear()
 
             deadline = self.engine.next_deadline()
             timeout = 0.05

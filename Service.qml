@@ -33,6 +33,7 @@ Item {
   property string lastError: ""
   property string sessionState: "idle"
   property var sessionGame: null
+  property string sessionWindow: ""
   property var pads: []
   property var configErrors: []
   property bool cheatSheetOpen: false
@@ -170,6 +171,7 @@ Item {
     if (force) {
       root.sessionState = "idle"
       root.sessionGame = null
+      root.sessionWindow = ""
       root.sessionChanged()
       root.returnToArcade()
     }
@@ -184,12 +186,19 @@ Item {
     Qt.callLater(function() {
       root.sessionState = "idle"
       root.sessionGame = null
+      root.sessionWindow = ""
       root.sessionChanged()
       root.refreshIdleInhibit()
     })
   }
 
   function focusGame() {
+    if (root.sessionWindow) {
+      Quickshell.execDetached([
+        "hyprctl", "dispatch", "focuswindow", "address:" + root.sessionWindow
+      ])
+      return
+    }
     var g = root.sessionGame
     if (!g || !g.track || !g.track.windowClass)
       return
@@ -332,13 +341,31 @@ Item {
       root.sessionChanged()
       root.refreshIdleInhibit()
     } else if (state === "running") {
+      root.log("session running game=" + (msg.game || "?") + " window=" + (msg.windowAddress || "-"))
       root.sessionState = "running"
+      root.sessionWindow = msg.windowAddress || ""
       root.sessionChanged()
       root.refreshIdleInhibit()
     } else if (state === "exited") {
       var title = (root.sessionGame && root.sessionGame.title) || "Game"
-      root.notifySend("Game ended", title)
+      root.log("session exited game=" + (msg.game || "?") + " reason=" + (msg.reason || "?")
+               + " seconds=" + (msg.seconds || 0) + " code=" + msg.exitCode)
+      if (msg.reason === "failed" || msg.reason === "no-window")
+        root.notifySend("Couldn't start", title)
+      else if (msg.reason !== "force")
+        root.notifySend("Game ended", title)
       root.returnToArcade()
+      root.refreshIdleInhibit()
+    } else if (state === "lost" || state === "failed") {
+      // No window or process ever showed up (or the launch was rejected).
+      // Stop tracking without claiming the game ended or covering it with Arcade.
+      root.log("session " + state + " game=" + (msg.game || "?") + " reason=" + (msg.reason || "?"))
+      if (state === "failed")
+        root.notifySend("Couldn't start", (root.sessionGame && root.sessionGame.title) || "")
+      root.sessionState = "idle"
+      root.sessionGame = null
+      root.sessionWindow = ""
+      root.sessionChanged()
       root.refreshIdleInhibit()
     }
   }
@@ -450,6 +477,14 @@ Item {
     onExited: function(exitCode, exitStatus) {
       root.daemonReady = false
       root.log("arcaded exited code=" + exitCode + " status=" + exitStatus + " — will retry")
+      // A restarted daemon has no session; don't keep blocking launches.
+      if (root.sessionState !== "idle") {
+        root.sessionState = "idle"
+        root.sessionGame = null
+        root.sessionWindow = ""
+        root.sessionChanged()
+        root.refreshIdleInhibit()
+      }
       daemonRestart.interval = exitCode === 127 ? 1500 : 3000
       daemonRestart.restart()
     }
