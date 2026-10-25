@@ -747,6 +747,9 @@ def build_menu(status: dict[str, Any], session_title: str | None = None) -> list
             }
         )
 
+    items.append(_header("Arcade"))
+    items.append(_action("arcade_keys", "Metadata keys", "Arcade", hint="SteamGridDB · IGDB"))
+
     # systemctl / loginctl are always present on Omarchy; never hide Power.
     items.append(_header("Power"))
     for name, label in (

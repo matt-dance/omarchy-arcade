@@ -167,6 +167,32 @@ def _empty_record(game: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+OPTIONAL_PROVIDERS = ("igdb", "steamgriddb")
+
+
+def providers_at_fetch(meta: dict[str, Any]) -> dict[str, bool]:
+    """Which optional providers had keys when this record was fetched.
+
+    Records written before ``providers`` existed are inferred from
+    ``sourcesUsed`` and the ``<provider>: unavailable`` errors.
+    """
+    stored = meta.get("providers")
+    if isinstance(stored, dict):
+        return {name: bool(stored.get(name)) for name in OPTIONAL_PROVIDERS}
+    used = set(meta.get("sourcesUsed") or [])
+    errors = [str(e) for e in meta.get("errors") or []]
+    return {
+        name: name in used or any(e.startswith(f"{name}:") for e in errors)
+        for name in OPTIONAL_PROVIDERS
+    }
+
+
+def missing_new_provider(meta: dict[str, Any], keys: Keys) -> bool:
+    """True when a key was added after this record was fetched."""
+    seen = providers_at_fetch(meta)
+    return (keys.has_igdb and not seen["igdb"]) or (keys.has_steamgriddb and not seen["steamgriddb"])
+
+
 def resolve_game(
     game: Game | dict[str, Any],
     *,
@@ -196,7 +222,8 @@ def resolve_game(
         record["id"] = game_id
         record["errors"] = []
 
-    if existing and not force and is_fresh(existing, now=now):
+    creds = keys if keys is not None else load_keys()
+    if existing and not force and is_fresh(existing, now=now) and not missing_new_provider(existing, creds):
         _apply_launcher_meta(record, data)
         _overlay_playtime(record, steam_library_roots)
         record["fresh"] = True
@@ -209,7 +236,6 @@ def resolve_game(
         return record
 
     client = http or HttpClient()
-    creds = keys if keys is not None else load_keys()
     if is_launcher(data):
         _apply_launcher_meta(record, data)
     used: list[str] = list(record.get("sourcesUsed") or [])
@@ -298,6 +324,7 @@ def resolve_game(
     record["fetchedAt"] = iso_now()
     record["ttlDays"] = META_TTL_DAYS
     record["sourcesUsed"] = list(dict.fromkeys(used))
+    record["providers"] = {"igdb": creds.has_igdb, "steamgriddb": creds.has_steamgriddb}
     record["errors"] = errors
     record["fresh"] = True
     _overlay_playtime(record, steam_library_roots)

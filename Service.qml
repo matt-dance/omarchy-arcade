@@ -44,6 +44,7 @@ Item {
   property bool cheatSheetOpen: false
   property bool daemonReady: false
   property bool quickMenuWanted: false
+  property bool keysSheetWanted: false
   property bool uiOpen: false
 
   // Custom signals must not match a property's automatic *Changed signal.
