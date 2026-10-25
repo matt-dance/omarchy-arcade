@@ -52,7 +52,6 @@ Item {
   property string keysMessage: ""
   property bool keysTyping: false
   property bool keysConfirmRemove: false
-  property bool pendingKeysSheet: false
   property string pendingKeysStdin: ""
   property var queuedKeysArgs: null
 
@@ -149,8 +148,11 @@ Item {
     if (root.service && typeof root.service.setUiMode === "function")
       root.service.setUiMode(true)
     root.refreshKeyStatus()
-    if (root.pendingKeysSheet) {
-      root.pendingKeysSheet = false
+    var keysWanted = (payload && payload.surface === "keys") || !!(root.service && root.service.keysSheetWanted)
+    if (root.service)
+      root.service.keysSheetWanted = false
+    if (keysWanted) {
+      console.warn("matt-dance.arcade: open surface=keys")
       root.openKeys()
     }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -511,11 +513,14 @@ Item {
       root.openKeys()
       return
     }
-    root.pendingKeysSheet = true
-    if (root.service && typeof root.service.toggleArcade === "function")
-      root.service.toggleArcade()
-    else
-      Quickshell.execDetached(["omarchy-shell", "shell", "toggle", Model.pluginId(root.manifest), "{}"])
+    // The host may build a fresh overlay instance for this summon, so the
+    // request travels in the payload and in the keepLoaded service, not here.
+    if (root.service)
+      root.service.keysSheetWanted = true
+    console.warn("matt-dance.arcade: summoning Arcade for the keys sheet")
+    Quickshell.execDetached([
+      "omarchy-shell", "shell", "summon", Model.pluginId(root.manifest), '{"surface":"keys"}'
+    ])
   }
 
   function moveHome(dx, dy) {
