@@ -56,15 +56,36 @@ Item {
     { id: "logout", kind: "action", label: "Log out", section: "Power", confirm: true }
   ]
 
+  function hasSession() {
+    var state = root.service ? root.service.sessionState : "idle"
+    return state === "starting" || state === "running"
+  }
+
   function sessionTitle() {
-    return (root.service && root.service.sessionGame && root.service.sessionGame.title)
+    if (!root.hasSession())
+      return ""
+    return (root.service.sessionGame && root.service.sessionGame.title)
            ? root.service.sessionGame.title
-           : "No game running"
+           : "Game"
+  }
+
+  function currentFallbackItems() {
+    if (root.hasSession())
+      return root.fallbackItems
+    var out = [
+      { id: "sec-game", kind: "header", label: "Game", section: "Game" },
+      { id: "arcade", kind: "action", label: "Open Arcade", section: "Game" }
+    ]
+    for (var i = 0; i < root.fallbackItems.length; i++) {
+      if (root.fallbackItems[i].section === "Power")
+        out.push(root.fallbackItems[i])
+    }
+    return out
   }
 
   function focusableItems() {
     var out = []
-    var list = root.items && root.items.length ? root.items : root.fallbackItems
+    var list = root.items && root.items.length ? root.items : root.currentFallbackItems()
     for (var i = 0; i < list.length; i++) {
       if (list[i] && list[i].kind !== "header")
         out.push({ item: list[i], index: i })
@@ -158,7 +179,7 @@ Item {
       var data = JSON.parse(text)
       root.status = data.status || {}
       var next = data.items || []
-      root.items = next.length ? next : root.fallbackItems
+      root.items = next.length ? next : root.currentFallbackItems()
       root.clampSelection()
       if (!root.statusLine)
         root.statusLine = ""
@@ -175,7 +196,7 @@ Item {
       console.warn("matt-dance.arcade: sysmenu payload parse failed: " + e
                    + " text=" + String(text || "").slice(0, 180))
       if (!root.items.length)
-        root.items = root.fallbackItems
+        root.items = root.currentFallbackItems()
     }
   }
 
@@ -357,7 +378,11 @@ Item {
     root.pickerItem = null
     root.statusLine = ""
     if (!root.items.length)
-      root.items = root.fallbackItems
+      root.items = root.currentFallbackItems()
+    else if (!root.hasSession())
+      root.items = root.items.filter(function(it) {
+        return it.id !== "resume" && it.id !== "close" && it.id !== "force"
+      })
     root.refreshMenu()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -422,7 +447,7 @@ Item {
           font.bold: true
         }
         Text {
-          text: root.sessionTitle()
+          text: root.sessionTitle() || "No game running"
           color: root.foreground
           opacity: 0.65
           font.family: Style.font.menuFamily
@@ -550,7 +575,7 @@ Item {
             spacing: Style.spacing.xs
 
             Repeater {
-              model: root.items && root.items.length ? root.items : root.fallbackItems
+              model: root.items && root.items.length ? root.items : root.currentFallbackItems()
               Rectangle {
                 required property var modelData
                 required property int index
@@ -716,7 +741,7 @@ Item {
       console.warn("matt-dance.arcade: arcade-sys items exit=" + exitCode
                    + " items=" + (root.items ? root.items.length : 0))
       if (exitCode !== 0 && (!root.items || !root.items.length))
-        root.items = root.fallbackItems
+        root.items = root.currentFallbackItems()
     }
   }
 

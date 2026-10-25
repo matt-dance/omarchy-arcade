@@ -565,11 +565,14 @@ def build_menu(status: dict[str, Any], session_title: str | None = None) -> list
     items: list[dict[str, Any]] = []
 
     items.append(_header("Game"))
-    game = session_title or "No game running"
-    items.append(_action("resume", "Resume", "Game", hint=game))
-    items.append(_action("close", "Close game", "Game"))
-    items.append(_action("force", "Force quit", "Game"))
-    items.append(_action("arcade", "Back to Arcade", "Game"))
+    if session_title:
+        items.append(_action("resume", "Resume", "Game", hint=session_title))
+        items.append(_action("close", "Close game", "Game"))
+        items.append(_action("force", "Force quit", "Game"))
+        items.append(_action("arcade", "Back to Arcade", "Game"))
+    else:
+        # Nothing tracked: Close/Force quit would have no target.
+        items.append(_action("arcade", "Open Arcade", "Game"))
 
     audio = status.get("audio") or {}
     if tools.get("volume"):

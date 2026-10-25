@@ -91,7 +91,17 @@ Service to daemon:
 
 - **Library cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/library.json`. It is rebuilt by `arcade-scan` and atomically replaced.
 - **Metadata cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/meta/<id>.json` plus images in `meta/<id>/`. Written by `arcade-meta`. Fresh for 14 days; stale cache is still shown while a refresh runs.
-- **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` holds favorites, hidden games, per-game options, Arcade's own last-played times and playtime, and the "Play on" preference. It survives rescans and cache wipes.
+- **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` (`arcade/state.py`) holds favorites, hidden games, the library sort order, and Arcade's own history per game id (`lastPlayed`, `seconds`, `launches`). It survives rescans and cache wipes. arcaded records a launch and, when a session ends, its playtime (sessions under 10 s and failed launches are skipped). The overlay changes favorites, hidden and sort through `bin/arcade-state`. All writes take a `flock` on `state.json.lock` and replace the file atomically. The overlay reads the file itself and merges it into the library: `lastPlayed` is the later of the store's and Arcade's, and playtime is the larger of the two. Favorites and hidden flags on any Play on… id apply to the merged card.
+
+```json
+{
+  "version": 1,
+  "favorites": ["steam:1245620"],
+  "hidden": ["desktop:battle.net-uninstall"],
+  "sort": "recent",                       // recent | az | played | source
+  "games": { "gfn:gfn-107820252": { "lastPlayed": "2026-10-20T21:14:03Z", "seconds": 7260, "launches": 4 } }
+}
+```
 - **Merging:** a `.desktop` entry whose `Exec` launches `steam://rungameid/`, `heroic://`, `lutris:rungameid/` or `itch://` is folded into that source's entry. Titles that match after normalization (including stripping a `GFN - ` prefix) across different stores collapse into one card with `alsoOn` launch payloads for the Play on… picker.
 
 ## Scanners
@@ -145,16 +155,19 @@ Downloads are written to `${XDG_CACHE_HOME}/matt-dance.arcade/art/<id>/<slot>.<e
 ## Session tracker state machine
 
 ```text
-idle ──launch──▶ starting ──window seen / pid alive──▶ running ──exit detected──▶ returning ──▶ idle
-  ▲                 │ timeout 90 s with no window                  │ user closes game
-  └─────────────────┴──────────── notify "Game didn't start" ◀──────┘
+idle ──launch──▶ starting ──evidence seen──▶ running ──no evidence for 2 polls──▶ exited ──▶ returning ──▶ idle
+  ▲                 │ launcher exit ≠ 0 → exited (failed): "Couldn't start", return to Arcade
+  │                 │ no evidence after 180 s (hand-off) / 90 s → lost: stop tracking quietly
+  └─────────────────┘
 ```
 
-- **`starting`.** The overlay is hidden, idle is inhibited, and a toast reads "Launching …". On `GUIDE + B`, the launch is cancelled.
+- **`starting`.** The overlay is hidden, idle is inhibited, and a toast reads "Launching …".
+- **Evidence** (polled every 1.5 s by `arcade/session.py`, not on every daemon loop): a Hyprland client whose class matches `track.windowClass` (`steam_app_<id>`, a `.desktop` `StartupWMClass`, `GeForceNOW`) or `steam_app_<steamAppId>`; Steam's `reaper SteamLaunch AppId=<id>` process; the launch scope or direct child for in-place launches; and, as a last resort while starting, a window that appeared after launch and is not a launcher (Steam, Heroic, Lutris, …).
+- **Hand-off.** `uri` and `desktop` launches, `uwsm-app`, and scanners that set `track.handoff` return immediately while the game keeps running elsewhere. Their launcher exit code 0 means nothing. A non-zero exit code means the launch failed.
 - **`running`.** Global chords and the Quick Menu are active. Optionally the key-lock submap or the Game Mode Switcher performance session is on.
-- **Exit detection** is per source. The tracked pid set comes from the scope's `cgroup.procs`, read once on launch and refreshed on Hyprland `openwindow`, together with the window address. "Exited" means the scope is empty, or the hand-off pid has exited and the tracked window is closed.
+- **`lost`.** No evidence ever showed up (for example an unknown window class and the window was already open). Arcade stops tracking without "Game ended" and without re-summoning itself over the game.
 - **`returning`.** Arcade restores the workspace, re-summons the overlay, restores focus to the launched card, records playtime, and releases the inhibitor.
-- **Close game.** Arcade sends `closewindow` to the game's address. If it is still alive after 5 s, it shows a "Force quit?" prompt, which on confirmation sends `SIGTERM` and then `SIGKILL` to the scope (`systemctl --user kill`).
+- **Close game.** Arcade sends `closewindow` to the tracked window's address and `SIGTERM` to the launch scope. **Force quit** sends `SIGKILL` to the scope, the tracked window's pid, Steam's reaper for the app, and all their descendants.
 
 ## Input and chord engine
 

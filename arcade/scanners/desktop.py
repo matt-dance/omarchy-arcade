@@ -340,7 +340,8 @@ def scan() -> tuple[list[Game], list[ScanError]]:
                     steam_app_id=steam_app_id,
                     launch=_launch_from_exec(exec_line, path),
                     track=TrackSpec(
-                        window_class="GeForceNOW" if source == "gfn" else None,
+                        window_class=fields.get("StartupWMClass")
+                        or ("GeForceNOW" if source == "gfn" else None),
                         steam_app_id=steam_app_id,
                         handoff=source in ("gfn", "webapp") or steam_app_id is not None,
                     ),

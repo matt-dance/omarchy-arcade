@@ -192,6 +192,19 @@ def inspect_device(path: str) -> DeviceInfo | None:
         os.close(fd)
 
 
+def read_abs_range(fd: int, axis: int) -> tuple[int, int] | None:
+    """(minimum, maximum) of an absolute axis, or None if the device lacks it."""
+    buf = ctypes.create_string_buffer(struct.calcsize("iiiiii"))
+    try:
+        fcntl.ioctl(fd, EVIOCGABS(axis), buf)
+    except OSError:
+        return None
+    _value, minimum, maximum, _fuzz, _flat, _res = struct.unpack("iiiiii", buf.raw)
+    if maximum <= minimum:
+        return None
+    return minimum, maximum
+
+
 def read_events(fd: int) -> list[tuple[int, int, int]]:
     """Read available input_events; return list of (type, code, value)."""
     out: list[tuple[int, int, int]] = []

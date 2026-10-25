@@ -108,10 +108,14 @@ function runnerBadge(runner) {
 
 function filterGames(games, query) {
   var q = String(query || "").trim().toLowerCase()
-  if (!q.length) return games.slice()
   var out = []
   for (var i = 0; i < games.length; i++) {
     var g = games[i]
+    if (g.hidden) continue
+    if (!q.length) {
+      out.push(g)
+      continue
+    }
     var hay = (g.title || "") + " " + (g.source || "") + " " + (g.store || "") + " " + (g.platform || "")
     if (hay.toLowerCase().indexOf(q) !== -1)
       out.push(g)
@@ -119,28 +123,215 @@ function filterGames(games, query) {
   return out
 }
 
+var RECENT_LIMIT = 10
+
+function byTitle(a, b) {
+  return String(a.sortTitle || a.title || "").localeCompare(String(b.sortTitle || b.title || ""))
+}
+
+function byRecent(a, b) {
+  var la = a.lastPlayed || ""
+  var lb = b.lastPlayed || ""
+  if (la === lb) return byTitle(a, b)
+  return la < lb ? 1 : -1
+}
+
+// Recently played (newest first, capped), then favorites A–Z, then the
+// rest: other played games by recency, then never-played A–Z. Hidden
+// games never appear on Home.
 function homeShelf(games) {
-  var items = (games || []).slice()
+  var items = (games || []).filter(function(g) { return g && !g.hidden })
   var played = []
-  var rest = []
+  var unplayed = []
   for (var i = 0; i < items.length; i++) {
     if (items[i].lastPlayed)
       played.push(items[i])
     else
-      rest.push(items[i])
+      unplayed.push(items[i])
   }
-  function byTitle(a, b) {
-    return String(a.sortTitle || a.title || "").localeCompare(String(b.sortTitle || b.title || ""))
+  played.sort(byRecent)
+  unplayed.sort(byTitle)
+  var recent = played.slice(0, RECENT_LIMIT)
+  var olderPlayed = played.slice(RECENT_LIMIT)
+  var favorites = []
+  var rest = []
+  var remaining = olderPlayed.concat(unplayed)
+  for (var j = 0; j < remaining.length; j++) {
+    if (remaining[j].favorite)
+      favorites.push(remaining[j])
+    else
+      rest.push(remaining[j])
   }
-  played.sort(byTitle)
-  played.sort(function(a, b) {
-    var la = a.lastPlayed || ""
-    var lb = b.lastPlayed || ""
-    if (la === lb) return 0
-    return la < lb ? 1 : -1
-  })
-  rest.sort(byTitle)
-  return played.concat(rest)
+  favorites.sort(byTitle)
+  return recent.concat(favorites).concat(rest)
+}
+
+var SORTS = ["recent", "az", "played", "source"]
+
+function sortLabel(mode) {
+  if (mode === "az") return "A–Z"
+  if (mode === "played") return "Most played"
+  if (mode === "source") return "Store"
+  return "Recently played"
+}
+
+function nextSort(mode) {
+  var i = SORTS.indexOf(mode)
+  return SORTS[(i + 1) % SORTS.length]
+}
+
+function sortGames(games, mode) {
+  var out = (games || []).slice()
+  if (mode === "az") {
+    out.sort(byTitle)
+  } else if (mode === "played") {
+    out.sort(function(a, b) {
+      var pa = Number(a.playtimeMinutes) || 0
+      var pb = Number(b.playtimeMinutes) || 0
+      if (pa === pb) return byRecent(a, b)
+      return pb - pa
+    })
+  } else if (mode === "source") {
+    out.sort(function(a, b) {
+      var sa = sourceLabel(a.source)
+      var sb = sourceLabel(b.source)
+      if (sa === sb) return byTitle(a, b)
+      return sa.localeCompare(sb)
+    })
+  } else {
+    out.sort(byRecent)
+  }
+  return out
+}
+
+// Library tabs cycled with LB/RB after Home: everything, favorites, one
+// tab per store present, then hidden games (only when something is hidden).
+function libraryTabs(games) {
+  var tabs = [{ id: "all", label: "All games" }, { id: "favorites", label: "Favorites" }]
+  var sources = []
+  var anyHidden = false
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var g = list[i]
+    if (!g) continue
+    if (g.hidden) anyHidden = true
+    var src = String(g.source || "")
+    if (src && sources.indexOf(src) === -1)
+      sources.push(src)
+  }
+  sources.sort(function(a, b) { return sourceLabel(a).localeCompare(sourceLabel(b)) })
+  if (sources.length > 1) {
+    for (var j = 0; j < sources.length; j++)
+      tabs.push({ id: "source:" + sources[j], label: sourceLabel(sources[j]) })
+  }
+  if (anyHidden)
+    tabs.push({ id: "hidden", label: "Hidden" })
+  return tabs
+}
+
+function tabGames(games, tabId) {
+  var out = []
+  var list = games || []
+  var tab = String(tabId || "all")
+  for (var i = 0; i < list.length; i++) {
+    var g = list[i]
+    if (!g) continue
+    if (tab === "hidden") {
+      if (g.hidden) out.push(g)
+      continue
+    }
+    if (g.hidden) continue
+    if (tab === "favorites" && !g.favorite) continue
+    if (tab.indexOf("source:") === 0 && String(g.source || "") !== tab.slice(7)) continue
+    out.push(g)
+  }
+  return out
+}
+
+function stateFilePath(home, xdgStateHome) {
+  var xdg = xdgStateHome || ""
+  var base = (xdg && xdg.length) ? xdg : (String(home || "") + "/.local/state")
+  return base + "/matt-dance.arcade/state.json"
+}
+
+function idSet(list) {
+  var out = {}
+  if (!list || list.length === undefined) return out
+  for (var i = 0; i < list.length; i++) {
+    if (typeof list[i] === "string" && list[i].length)
+      out[list[i]] = true
+  }
+  return out
+}
+
+function parseStateText(text) {
+  var state = { favorites: {}, hidden: {}, games: {}, sort: "recent" }
+  if (!text || !String(text).length)
+    return state
+  try {
+    var data = JSON.parse(text)
+    if (!data || typeof data !== "object")
+      return state
+    state.favorites = idSet(data.favorites)
+    state.hidden = idSet(data.hidden)
+    if (data.games && typeof data.games === "object")
+      state.games = data.games
+    if (SORTS.indexOf(data.sort) !== -1)
+      state.sort = data.sort
+  } catch (e) {}
+  return state
+}
+
+function laterIso(a, b) {
+  if (!a) return b || null
+  if (!b) return a
+  return a > b ? a : b
+}
+
+// Arcade's own history fills in what stores don't track (GeForce NOW,
+// Battle.net, .desktop games) and keeps Steam's lastPlayed current.
+function applyState(games, state) {
+  var list = games || []
+  if (!state) return list.slice()
+  var out = []
+  for (var i = 0; i < list.length; i++) {
+    var g = list[i]
+    var ids = [String(g.id)]
+    var extra = g.alsoOn || []
+    for (var k = 0; k < extra.length; k++) {
+      if (extra[k] && typeof extra[k] === "object" && extra[k].id)
+        ids.push(String(extra[k].id))
+    }
+    var last = g.lastPlayed || null
+    var seconds = 0
+    var launches = 0
+    var favorite = false
+    var hidden = false
+    for (var j = 0; j < ids.length; j++) {
+      var entry = state.games[ids[j]]
+      if (entry) {
+        last = laterIso(last, entry.lastPlayed)
+        seconds += Number(entry.seconds) || 0
+        launches += Number(entry.launches) || 0
+      }
+      if (state.favorites[ids[j]]) favorite = true
+      if (state.hidden[ids[j]]) hidden = true
+    }
+    var copy = {}
+    for (var key in g) {
+      if (Object.prototype.hasOwnProperty.call(g, key))
+        copy[key] = g[key]
+    }
+    copy.lastPlayed = last
+    var storeMinutes = Number(g.playtimeMinutes) || 0
+    var arcadeMinutes = Math.round(seconds / 60)
+    copy.playtimeMinutes = Math.max(storeMinutes, arcadeMinutes) || g.playtimeMinutes || null
+    copy.arcadeLaunches = launches
+    copy.favorite = favorite
+    copy.hidden = hidden
+    out.push(copy)
+  }
+  return out
 }
 
 function sourceBadges(game) {
@@ -216,8 +407,8 @@ function formatLastPlayed(iso) {
 
 function playMeta(game, meta) {
   if (!game && !meta) return ""
-  var last = (meta && meta.lastPlayed) || (game && game.lastPlayed)
-  var minutes = (meta && meta.playtimeMinutes) || (game && game.playtimeMinutes)
+  var last = lastPlayedOf(game, meta)
+  var minutes = playtimeMinutesOf(game, meta)
   var parts = []
   var year = formatYear(meta && meta.releaseYear)
   var rating = formatRating(meta && meta.rating)
@@ -360,6 +551,24 @@ function playOnChoices(game) {
   return out
 }
 
+// Rows of the per-game Options sheet (X): launch choices, then library actions.
+function optionItems(game) {
+  if (!game) return []
+  var items = []
+  var choices = playOnChoices(game)
+  for (var i = 0; i < choices.length; i++) {
+    items.push({
+      action: "play",
+      choice: choices[i],
+      label: choices.length > 1 ? "Play on " + (choices[i].label || sourceLabel(choices[i].source)) : "Play"
+    })
+  }
+  items.push({ action: "favorite", label: game.favorite ? "Remove from favorites" : "Add to favorites" })
+  items.push({ action: "hide", label: game.hidden ? "Show in library" : "Hide from library" })
+  items.push({ action: "refresh", label: "Refresh metadata" })
+  return items
+}
+
 function initials(title) {
   var t = String(title || "").trim()
   if (!t.length) return "?"
@@ -494,13 +703,13 @@ function descriptionText(game, meta) {
 }
 
 function playtimeMinutesOf(game, meta) {
-  if (meta && meta.playtimeMinutes) return meta.playtimeMinutes
-  return game ? game.playtimeMinutes : null
+  var a = Number(meta && meta.playtimeMinutes) || 0
+  var b = Number(game && game.playtimeMinutes) || 0
+  return Math.max(a, b) || null
 }
 
 function lastPlayedOf(game, meta) {
-  if (meta && meta.lastPlayed) return meta.lastPlayed
-  return game ? game.lastPlayed : null
+  return laterIso(meta && meta.lastPlayed, game && game.lastPlayed)
 }
 
 function factsLine(game, meta) {

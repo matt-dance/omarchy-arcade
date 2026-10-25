@@ -54,7 +54,16 @@ Item {
   property bool keysConfirmRemove: false
   property string pendingKeysStdin: ""
   property var queuedKeysArgs: null
+  property var libraryState: Model.parseStateText("")
+  property string libraryTab: "all"
+  property string sortMode: "recent"
+  property string optionsTitle: ""
+  property string lastListLog: ""
+  property bool pendingMetaForce: false
+  property string selectedGameId: ""
+  property var tabSelection: ({})
   property point lastPointer: Qt.point(-1, -1)
+  property string searchReturnScreen: "home"
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -75,6 +84,13 @@ Item {
   readonly property bool showKeysCard: root.keyStatus.file !== undefined
                                        && !root.keyStatus.steamgriddb && !root.keyStatus.igdb
                                        && !root.keyStatus.promptDismissed
+
+  readonly property string stateBin: root.pluginDir + "/bin/arcade-state"
+  readonly property string stateFile: Model.stateFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_STATE_HOME") || ""
+  )
+  property var libraryTabs: Model.libraryTabs([])
   readonly property string metaFile: Model.metaFilePath(
     Quickshell.env("HOME") || "",
     Quickshell.env("XDG_CACHE_HOME") || "",
@@ -100,8 +116,10 @@ Item {
     { key: "A", label: "Play" },
     { key: "B", label: "Back" },
     { key: "Y", label: "Search" },
-    { key: "LB/RB", label: "Home/Library" },
+    { key: "LB/RB", label: "Tabs" },
+    { key: "Select", label: "Sort" },
     { key: "X", label: "Options" },
+    { key: "R3", label: "Favorite" },
     { key: "Start", label: "Settings" }
   ]
   readonly property var homeShelfHints: [
@@ -111,6 +129,13 @@ Item {
     { key: "X", label: "Options" },
     { key: "LB/RB", label: "Library" },
     { key: "B", label: "Close" }
+  ]
+  readonly property var oskHints: [
+    { key: "A", label: "Type" },
+    { key: "X", label: "Delete" },
+    { key: "Y", label: "Space" },
+    { key: "Start", label: "Done" },
+    { key: "B", label: "Close keyboard" }
   ]
   readonly property var homeDetailsHints: [
     { key: "A", label: "Select" },
@@ -138,11 +163,17 @@ Item {
       quickMenu.close()
     root.playOnOpen = false
     root.opened = true
+    osk.close()
+    searchInput.text = ""
     root.screen = "home"
     root.filterText = ""
-    root.selectedIndex = 0
+    root.resetSelection()
+    root.tabSelection = {}
+    root.lastPointer = Qt.point(-1, -1)
     root.focusZone = "shelf"
     root.detailButton = 0
+    if (stateView && typeof stateView.reload === "function")
+      stateView.reload()
     root.loadLibraryFromDisk()
     root.refreshList()
     root.ensureLibrary()
@@ -180,7 +211,153 @@ Item {
   }
 
   function libraryGames() {
-    return Model.resolvedGames(root.service, root.localGames)
+    return Model.applyState(Model.resolvedGames(root.service, root.localGames), root.libraryState)
+  }
+
+  function loadStateFromDisk() {
+    var text = ""
+    try {
+      text = stateView.text()
+    } catch (e) {
+      text = ""
+    }
+    root.libraryState = Model.parseStateText(text)
+    root.sortMode = root.libraryState.sort
+    root.refreshKeepingFocus()
+  }
+
+  function runStateCommand(args) {
+    Quickshell.execDetached(["/usr/bin/python3", root.stateBin].concat(args))
+  }
+
+  function focusedGameOrNull() {
+    if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
+      return null
+    return root.visibleGames[root.selectedIndex]
+  }
+
+  // Update the in-memory state immediately; state.json catches up via FileView.
+  function toggleStateMember(listName, game) {
+    if (!game || !game.id)
+      return
+    var next = Model.parseStateText(JSON.stringify({
+      favorites: Object.keys(root.libraryState.favorites),
+      hidden: Object.keys(root.libraryState.hidden),
+      games: root.libraryState.games,
+      sort: root.libraryState.sort
+    }))
+    var on = !game[listName === "favorites" ? "favorite" : "hidden"]
+    var ids = [String(game.id)]
+    var extra = game.alsoOn || []
+    for (var i = 0; i < extra.length; i++) {
+      if (extra[i] && typeof extra[i] === "object" && extra[i].id)
+        ids.push(String(extra[i].id))
+    }
+    for (var j = 0; j < ids.length; j++) {
+      if (on && j === 0)
+        next[listName][ids[j]] = true
+      else if (!on)
+        delete next[listName][ids[j]]
+    }
+    root.libraryState = next
+    root.refreshKeepingFocus()
+    var cmd = listName === "favorites" ? "favorite" : "hide"
+    root.runStateCommand([cmd, String(game.id), on ? "--on" : "--off"])
+    for (var k = 1; k < ids.length && !on; k++)
+      root.runStateCommand([cmd, ids[k], "--off"])
+  }
+
+  function toggleFavorite(game) {
+    root.toggleStateMember("favorites", game || root.focusedGameOrNull())
+  }
+
+  function toggleHidden(game) {
+    root.toggleStateMember("hidden", game || root.focusedGameOrNull())
+  }
+
+  function cycleSort() {
+    root.sortMode = Model.nextSort(root.sortMode)
+    root.libraryState.sort = root.sortMode
+    root.resetSelection()
+    root.refreshList()
+    root.runStateCommand(["sort", root.sortMode])
+  }
+
+  function libraryTabIndex() {
+    for (var i = 0; i < root.libraryTabs.length; i++) {
+      if (root.libraryTabs[i].id === root.libraryTab)
+        return i
+    }
+    return -1
+  }
+
+  function libraryTabLabel() {
+    var i = root.libraryTabIndex()
+    return i >= 0 ? root.libraryTabs[i].label : "All games"
+  }
+
+  // LB/RB walk Home → All games → Favorites → each store → Hidden → Home.
+  function stepTab(delta) {
+    var tabs = root.libraryTabs
+    var pos = root.screen === "library" ? root.libraryTabIndex() : -1
+    var next = pos + delta
+    if (root.screen !== "library" && delta < 0)
+      next = tabs.length - 1
+    if (next < 0 || next >= tabs.length)
+      root.showTab("home", root.libraryTab)
+    else
+      root.showTab("library", tabs[next].id)
+  }
+
+  function tabKey() {
+    return root.screen === "home" ? "home" : (root.screen === "library" ? "library:" + root.libraryTab : "")
+  }
+
+  // Each tab remembers which game was focused, by id, so coming back lands
+  // on the same game even if the list reordered meanwhile.
+  function showTab(screen, tabId) {
+    var key = root.tabKey()
+    if (key && root.selectedGameId) {
+      var memory = root.tabSelection
+      memory[key] = root.selectedGameId
+      root.tabSelection = memory
+    }
+    root.screen = screen
+    root.libraryTab = tabId
+    root.filterText = ""
+    root.resetSelection()
+    root.selectedGameId = root.tabSelection[root.tabKey()] || ""
+    root.focusZone = "shelf"
+    root.detailButton = 0
+    root.refreshList()
+  }
+
+  function resetSelection() {
+    root.selectedIndex = 0
+    root.selectedGameId = ""
+  }
+
+  // Hover only counts when the pointer really moved. A sheet or list that
+  // appears under a resting pointer must not steal the controller's focus.
+  function pointerMoved(scenePos) {
+    var lastX = root.lastPointer.x
+    var lastY = root.lastPointer.y
+    root.lastPointer = Qt.point(scenePos.x, scenePos.y)
+    return lastX >= 0 && (scenePos.x !== lastX || scenePos.y !== lastY)
+  }
+
+  function emptyMessage() {
+    if (root.visibleGames.length || !root.libraryGames().length)
+      return ""
+    if (root.filterText.length)
+      return "No games match \u201c" + root.filterText + "\u201d."
+    if (root.screen !== "library")
+      return ""
+    if (root.libraryTab === "favorites")
+      return "No favorites yet.\nPress R3 (F3) on a game, or X \u2192 Add to favorites."
+    if (root.libraryTab === "hidden")
+      return "No hidden games."
+    return "No games here."
   }
 
   function loadLibraryFromDisk() {
@@ -232,21 +409,45 @@ Item {
     return true
   }
 
+  function refreshKeepingFocus() {
+    root.refreshList()
+  }
+
   function refreshList() {
     var games = root.libraryGames()
+    root.libraryTabs = Model.libraryTabs(games)
+    if (root.screen === "library" && root.libraryTabIndex() < 0)
+      root.libraryTab = "all"
     if (root.homeActive)
       root.visibleGames = Model.homeShelf(games)
+    else if (root.screen === "library" && !root.filterText.length)
+      root.visibleGames = Model.sortGames(Model.tabGames(games, root.libraryTab), root.sortMode)
     else
       root.visibleGames = Model.filterGames(games, root.filterText)
-    if (root.selectedIndex >= root.visibleGames.length)
+    var keepIndex = -1
+    if (root.selectedGameId) {
+      for (var i = 0; i < root.visibleGames.length; i++) {
+        if (String(root.visibleGames[i].id) === root.selectedGameId) {
+          keepIndex = i
+          break
+        }
+      }
+    }
+    if (keepIndex >= 0)
+      root.selectedIndex = keepIndex
+    else if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
     root.updateFocused()
     var cacheN = root.localGames ? root.localGames.length : 0
     var serviceN = (root.service && root.service.games) ? root.service.games.length : 0
-    console.warn("matt-dance.arcade: shelf=" + root.visibleGames.length
-                 + " cache=" + cacheN
-                 + " service=" + serviceN
-                 + " resolved=" + games.length)
+    var listLog = "shelf=" + root.visibleGames.length
+                  + " cache=" + cacheN
+                  + " service=" + serviceN
+                  + " resolved=" + games.length
+    if (listLog !== root.lastListLog) {
+      root.lastListLog = listLog
+      console.warn("matt-dance.arcade: " + listLog)
+    }
     var n = games.length
     var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
     if (scanning && n === 0)
@@ -257,6 +458,8 @@ Item {
       root.statusText = n + " games (cached) · service not loaded — omarchy-restart-shell"
     else if (root.screen === "home")
       root.statusText = "Home · " + n + " games"
+    else if (root.screen === "library" && !root.filterText.length)
+      root.statusText = root.libraryTabLabel() + " · " + root.visibleGames.length + " games · " + Model.sortLabel(root.sortMode)
     else
       root.statusText = root.visibleGames.length + " of " + n + " games"
   }
@@ -266,8 +469,12 @@ Item {
       root.focusedGame = root.visibleGames[root.selectedIndex]
     else
       root.focusedGame = null
+    if (root.focusedGame)
+      root.selectedGameId = String(root.focusedGame.id)
     root.loadMetaFromDisk()
-    root.ensureMeta(root.focusedGame)
+    // Holding the D-pad / stick moves focus every ~110 ms; only fetch
+    // metadata for the card the user settles on.
+    metaDebounce.restart()
   }
 
   function loadMetaFromDisk() {
@@ -338,14 +545,24 @@ Item {
     if (root.selectedMeta && root.selectedMeta.id === game.id && Model.metaIsFresh(root.selectedMeta)
         && !Model.metaMissingProvider(root.selectedMeta, root.keyStatus))
       return
+    root.startMeta(game.id, false)
+  }
+
+  function startMeta(gameId, force) {
     if (metaProcess.running) {
-      root.pendingMetaId = game.id
+      root.pendingMetaId = gameId
+      root.pendingMetaForce = force
       return
     }
     root.pendingMetaId = ""
-    metaProcess.command = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir, game.id]
-    console.warn("matt-dance.arcade: overlay starting arcade-meta " + game.id
-                 + " file=" + root.metaFile)
+    root.pendingMetaForce = false
+    var cmd = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir]
+    if (force)
+      cmd.push("--force")
+    cmd.push(gameId)
+    metaProcess.command = cmd
+    console.warn("matt-dance.arcade: overlay starting arcade-meta " + gameId
+                 + (force ? " --force" : "") + " file=" + root.metaFile)
     metaProcess.running = true
   }
 
@@ -415,15 +632,6 @@ Item {
       metaRefreshProcess.running = true
     }
     root.ensureMeta(root.focusedGame)
-  }
-
-  // Hover only counts when the pointer really moved. A sheet that appears
-  // under a resting pointer must not steal the controller's focus.
-  function pointerMoved(scenePos) {
-    var lastX = root.lastPointer.x
-    var lastY = root.lastPointer.y
-    root.lastPointer = Qt.point(scenePos.x, scenePos.y)
-    return lastX >= 0 && (scenePos.x !== lastX || scenePos.y !== lastY)
   }
 
   function openKeys() {
@@ -535,6 +743,42 @@ Item {
     ])
   }
 
+  function setFilter(text) {
+    var next = String(text || "")
+    if (next.length)
+      root.screen = "search"
+    root.selectedIndex = 0
+    root.filterText = next
+    searchInput.text = next
+    root.refreshList()
+  }
+
+  function openOsk() {
+    if (root.screen !== "search")
+      root.searchReturnScreen = root.screen === "settings" ? "home" : root.screen
+    root.screen = "search"
+    root.focusZone = "shelf"
+    root.refreshList()
+    osk.open()
+  }
+
+  function closeOsk() {
+    osk.close()
+    if (!root.filterText.length) {
+      root.screen = root.searchReturnScreen
+      root.refreshList()
+    }
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function handleOskIntent(name) {
+    if (name === "accept") osk.activate()
+    else if (name === "back") root.closeOsk()
+    else if (name === "options") osk.backspace()
+    else if (name === "search") osk.typed(" ")
+    else if (name === "menu") osk.done()
+  }
+
   function moveHome(dx, dy) {
     var count = root.visibleGames.length
     if (count === 0)
@@ -579,13 +823,11 @@ Item {
   }
 
   function openOptions() {
-    if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
+    var game = root.focusedGameOrNull()
+    if (!game)
       return
-    var game = root.visibleGames[root.selectedIndex]
-    var choices = Model.playOnChoices(game)
-    if (!choices.length)
-      return
-    root.playOnChoices = choices
+    root.optionsTitle = game.title || ""
+    root.playOnChoices = Model.optionItems(game)
     root.playOnIndex = 0
     root.playOnOpen = true
   }
@@ -593,9 +835,17 @@ Item {
   function launchPlayOnChoice() {
     if (!root.playOnOpen || root.playOnIndex < 0 || root.playOnIndex >= root.playOnChoices.length)
       return
-    var choice = root.playOnChoices[root.playOnIndex]
+    var item = root.playOnChoices[root.playOnIndex]
+    var game = root.focusedGameOrNull()
     root.playOnOpen = false
-    root.launchResolved(choice)
+    if (item.action === "play")
+      root.launchResolved(item.choice)
+    else if (item.action === "favorite")
+      root.toggleFavorite(game)
+    else if (item.action === "hide")
+      root.toggleHidden(game)
+    else if (item.action === "refresh" && game)
+      root.startMeta(game.id, true)
   }
 
   // Host `shell call matt-dance.arcade <method>` hits this overlay item, not Service.qml.
@@ -679,6 +929,10 @@ Item {
       root.handleKeysIntent(name)
       return
     }
+    if (osk.opened) {
+      root.handleOskIntent(name)
+      return
+    }
     if (root.playOnOpen) {
       if (name === "accept") root.launchPlayOnChoice()
       else if (name === "back") root.playOnOpen = false
@@ -693,7 +947,7 @@ Item {
         root.activateSelected()
       }
     } else if (name === "back") {
-      if (root.filterText) root.filterText = ""
+      if (root.filterText) root.setFilter("")
       else if (root.homeActive && root.focusZone === "details") root.focusZone = "shelf"
       else if (root.screen !== "home") {
         root.screen = "home"
@@ -703,8 +957,8 @@ Item {
       }
       root.refreshList()
     } else if (name === "search") {
-      root.screen = "search"
-      root.refreshList()
+      // Intents come from the controller, so offer the on-screen keyboard.
+      root.openOsk()
     } else if (name === "options") {
       root.openOptions()
     } else if (name === "menu") {
@@ -712,19 +966,125 @@ Item {
       root.focusZone = "shelf"
       root.refreshList()
     } else if (name === "tab_next") {
-      root.screen = root.screen === "home" ? "library" : "home"
-      root.selectedIndex = 0
-      root.focusZone = "shelf"
-      root.detailButton = 0
-      root.refreshList()
+      root.stepTab(1)
     } else if (name === "tab_prev") {
-      root.screen = root.screen === "library" ? "home" : "library"
-      root.selectedIndex = 0
-      root.focusZone = "shelf"
-      root.detailButton = 0
-      root.refreshList()
+      root.stepTab(-1)
+    } else if (name === "sort") {
+      if (root.screen === "library" && !root.filterText.length)
+        root.cycleSort()
+    } else if (name === "favorite") {
+      if (root.screen !== "settings")
+        root.toggleFavorite()
     } else if (name === "page_down") root.moveSelection(root.homeActive ? 4 : 0, root.homeActive ? 0 : 2)
     else if (name === "page_up") root.moveSelection(root.homeActive ? -4 : 0, root.homeActive ? 0 : -2)
+  }
+
+  function handleKey(event) {
+    if (osk.opened) {
+      if (event.key === Qt.Key_Escape) root.closeOsk()
+      else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) osk.activate()
+      else if (event.key === Qt.Key_Up) osk.move("up")
+      else if (event.key === Qt.Key_Down) osk.move("down")
+      else if (event.key === Qt.Key_Left) osk.move("left")
+      else if (event.key === Qt.Key_Right) osk.move("right")
+      else if (event.key === Qt.Key_Backspace) osk.backspace()
+      else if (event.text && event.text.length === 1 && event.text >= " ") osk.typed(event.text)
+      event.accepted = true
+      return
+    }
+    if (root.keysOpen) {
+      if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+        root.closeKeys(); event.accepted = true
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        root.keysAccept(); event.accepted = true
+      } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
+        root.moveKeys(-1); event.accepted = true
+      } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Tab) {
+        root.moveKeys(1); event.accepted = true
+      } else if (event.key === Qt.Key_T || event.key === Qt.Key_X) {
+        root.startKeyTyping(); event.accepted = true
+      } else if (event.key === Qt.Key_Delete) {
+        root.keysRemoveCurrent(); event.accepted = true
+      }
+      return
+    }
+    if (root.playOnOpen) {
+      if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+        root.playOnOpen = false; event.accepted = true
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        root.launchPlayOnChoice(); event.accepted = true
+      } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K || event.key === Qt.Key_Left || event.key === Qt.Key_H) {
+        var n = root.playOnChoices.length
+        if (n) root.playOnIndex = (root.playOnIndex - 1 + n) % n
+        event.accepted = true
+      } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Right || event.key === Qt.Key_L) {
+        var m = root.playOnChoices.length
+        if (m) root.playOnIndex = (root.playOnIndex + 1) % m
+        event.accepted = true
+      }
+      return
+    }
+    if (event.key === Qt.Key_Escape) {
+      if (root.filterText) {
+        root.setFilter("")
+      } else if (root.homeActive && root.focusZone === "details") {
+        root.focusZone = "shelf"
+      } else if (root.screen !== "home" && root.screen !== "settings") {
+        root.screen = "home"
+        root.focusZone = "shelf"
+        root.refreshList()
+      } else if (root.screen === "settings") {
+        root.screen = "home"
+        root.refreshList()
+      } else {
+        root.dismiss()
+      }
+      event.accepted = true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.handleIntent("accept")
+      event.accepted = true
+    } else if (event.key === Qt.Key_X || event.key === Qt.Key_I) {
+      root.openOptions(); event.accepted = true
+    } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
+      root.moveSelection(0, -1); event.accepted = true
+    } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
+      root.moveSelection(0, 1); event.accepted = true
+    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_H) {
+      root.moveSelection(-1, 0); event.accepted = true
+    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_L) {
+      root.moveSelection(1, 0); event.accepted = true
+    } else if (event.key === Qt.Key_Tab) {
+      root.handleIntent("tab_next"); event.accepted = true
+    } else if (event.key === Qt.Key_Backtab) {
+      root.handleIntent("tab_prev"); event.accepted = true
+    } else if (event.key === Qt.Key_PageDown) {
+      root.handleIntent("page_down"); event.accepted = true
+    } else if (event.key === Qt.Key_PageUp) {
+      root.handleIntent("page_up"); event.accepted = true
+    } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_Y) {
+      if (root.screen !== "search")
+        root.searchReturnScreen = root.screen === "settings" ? "home" : root.screen
+      root.screen = "search"
+      root.refreshList()
+      searchInput.forceActiveFocus()
+      event.accepted = true
+    } else if (event.key === Qt.Key_M && event.modifiers === Qt.NoModifier) {
+      // Start-equivalent
+      root.handleIntent("menu"); event.accepted = true
+    } else if (event.key === Qt.Key_F2) {
+      root.handleIntent("sort"); event.accepted = true
+    } else if (event.key === Qt.Key_F3) {
+      root.handleIntent("favorite"); event.accepted = true
+    } else if (event.key === Qt.Key_F5) {
+      if (root.service) root.service.rescan()
+      event.accepted = true
+    } else if (event.text && event.text.length === 1 && event.text >= " " && root.screen !== "settings") {
+      if (root.screen !== "search")
+        root.searchReturnScreen = root.screen
+      root.setFilter(root.filterText + event.text)
+      searchInput.forceActiveFocus()
+      event.accepted = true
+    }
   }
 
   onServiceChanged: {
@@ -741,6 +1101,10 @@ Item {
       if (root.keysOpen) {
         if (dir === "up") root.moveKeys(-1)
         else if (dir === "down") root.moveKeys(1)
+        return
+      }
+      if (osk.opened) {
+        osk.move(dir)
         return
       }
       if (root.playOnOpen) {
@@ -844,9 +1208,41 @@ Item {
             selectedTextColor: root.selectedText
             selectionColor: Commons.Color.accent
             onTextChanged: {
+              if (text === root.filterText)
+                return
               root.filterText = text
-              root.screen = "search"
+              if (text.length)
+                root.screen = "search"
+              root.selectedIndex = 0
               root.refreshList()
+            }
+            // The key catcher is a sibling, so keys typed here never reach it.
+            // Hand navigation keys over; letters stay in the field.
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Escape) {
+                if (searchInput.text.length) {
+                  root.setFilter("")
+                } else {
+                  root.screen = root.searchReturnScreen
+                  root.refreshList()
+                  keyCatcher.forceActiveFocus()
+                }
+                event.accepted = true
+              } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                root.activateSelected()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                         || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab
+                         || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) {
+                root.handleKey(event)
+              } else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right)
+                         && event.modifiers === Qt.NoModifier
+                         && searchInput.selectedText.length === 0
+                         && (searchInput.cursorPosition === 0
+                             || searchInput.cursorPosition === searchInput.text.length)) {
+                // Mid-text the arrows edit the query; at either end they move the grid.
+                root.handleKey(event)
+              }
             }
           }
         }
@@ -871,7 +1267,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nMetadata keys (optional): SteamGridDB " + (root.keyStatus.steamgriddb ? "set" : "not set") + " · IGDB " + (root.keyStatus.igdb ? "set" : "not set") + ". Press A to set them up. Stored in ~/.config/matt-dance.arcade/keys.json (chmod 600), or run bin/arcade-keys setup in a terminal.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nMetadata keys (optional): SteamGridDB " + (root.keyStatus.steamgriddb ? "set" : "not set") + " · IGDB " + (root.keyStatus.igdb ? "set" : "not set") + ". Press A to set them up. Stored in ~/.config/matt-dance.arcade/keys.json (chmod 600), or run bin/arcade-keys setup in a terminal.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\nFavorites, hidden games, and play history: " + root.stateFile + "\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -1032,10 +1428,31 @@ Item {
                   }
                 }
 
+                Rectangle {
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  anchors.margins: Style.space(8)
+                  visible: !!modelData.favorite
+                  width: height
+                  height: favStar.implicitHeight + Style.space(4)
+                  radius: height / 2
+                  color: Qt.rgba(0, 0, 0, 0.65)
+                  Text {
+                    id: favStar
+                    anchors.centerIn: parent
+                    text: "★"
+                    color: Commons.Color.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  onEntered: {
+                  onPositionChanged: function(mouse) {
+                    if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                      return
                     root.selectedIndex = index
                     root.focusZone = "shelf"
                   }
@@ -1244,7 +1661,9 @@ Item {
                   MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onEntered: {
+                    onPositionChanged: function(mouse) {
+                      if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                        return
                       root.focusZone = "details"
                       root.detailButton = 0
                     }
@@ -1276,7 +1695,9 @@ Item {
                   MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onEntered: {
+                    onPositionChanged: function(mouse) {
+                      if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                        return
                       root.focusZone = "details"
                       root.detailButton = 1
                     }
@@ -1285,6 +1706,53 @@ Item {
                 }
               }
             }
+            }
+          }
+        }
+
+        // Library tabs (LB/RB) and sort order (Select)
+        RowLayout {
+          Layout.fillWidth: true
+          visible: root.screen === "library" && root.filterText.length === 0
+          spacing: Style.spacing.sm
+
+          Repeater {
+            model: root.libraryTabs
+            Rectangle {
+              required property var modelData
+              readonly property bool current: modelData.id === root.libraryTab
+              Layout.preferredWidth: tabText.implicitWidth + Style.space(20)
+              Layout.preferredHeight: tabText.implicitHeight + Style.space(10)
+              radius: height / 2
+              color: current ? root.selectedBackground : Qt.rgba(1, 1, 1, 0.06)
+              border.width: current ? 2 : 1
+              border.color: current ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.14)
+              Text {
+                id: tabText
+                anchors.centerIn: parent
+                text: modelData.label
+                color: parent.current ? root.selectedText : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              MouseArea {
+                anchors.fill: parent
+                onClicked: root.showTab("library", parent.modelData.id)
+              }
+            }
+          }
+
+          Item { Layout.fillWidth: true }
+
+          Text {
+            text: "Sort: " + Model.sortLabel(root.sortMode)
+            color: root.foreground
+            opacity: 0.7
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            MouseArea {
+              anchors.fill: parent
+              onClicked: root.cycleSort()
             }
           }
         }
@@ -1300,6 +1768,20 @@ Item {
           clip: true
           model: root.visibleGames
           boundsBehavior: Flickable.StopAtBounds
+
+          Text {
+            parent: grid
+            anchors.centerIn: parent
+            width: Math.min(parent.width, Style.space(560))
+            visible: text.length > 0
+            text: root.emptyMessage()
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+          }
 
           delegate: Item {
             width: grid.cellWidth
@@ -1392,10 +1874,32 @@ Item {
                 }
               }
 
+              Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Style.space(6)
+                visible: !!modelData.favorite
+                width: height
+                height: libFavStar.implicitHeight + Style.space(4)
+                radius: height / 2
+                color: Qt.rgba(0, 0, 0, 0.65)
+                Text {
+                  id: libFavStar
+                  anchors.centerIn: parent
+                  text: "★"
+                  color: Commons.Color.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
-                onEntered: root.selectedIndex = index
+                onPositionChanged: function(mouse) {
+                  if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                    root.selectedIndex = index
+                }
                 onClicked: {
                   root.selectedIndex = index
                   root.activateSelected()
@@ -1405,6 +1909,18 @@ Item {
           }
         }
 
+        Osk {
+          id: osk
+          Layout.fillWidth: true
+          Layout.preferredHeight: implicitHeight
+          fontFamily: root.fontFamily
+          foreground: root.foreground
+          onTyped: function(text) { root.setFilter(root.filterText + text) }
+          onBackspace: root.setFilter(root.filterText.slice(0, -1))
+          onCleared: root.setFilter("")
+          onDone: root.closeOsk()
+        }
+
         // Hint bar
         RowLayout {
           Layout.fillWidth: true
@@ -1412,9 +1928,11 @@ Item {
           visible: root.screen !== "settings"
 
           Repeater {
-            model: root.homeActive
-                   ? (root.focusZone === "details" ? root.homeDetailsHints : root.homeShelfHints)
-                   : root.defaultHints
+            model: osk.opened
+                   ? root.oskHints
+                   : (root.homeActive
+                      ? (root.focusZone === "details" ? root.homeDetailsHints : root.homeShelfHints)
+                      : root.defaultHints)
             RowLayout {
               required property var modelData
               spacing: Style.spacing.xs
@@ -1453,98 +1971,10 @@ Item {
         anchors.fill: parent
         focus: true
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (root.keysOpen) {
-            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
-              root.closeKeys(); event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.keysAccept(); event.accepted = true
-            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
-              root.moveKeys(-1); event.accepted = true
-            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Tab) {
-              root.moveKeys(1); event.accepted = true
-            } else if (event.key === Qt.Key_T || event.key === Qt.Key_X) {
-              root.startKeyTyping(); event.accepted = true
-            } else if (event.key === Qt.Key_Delete) {
-              root.keysRemoveCurrent(); event.accepted = true
-            }
-            return
-          }
-          if (root.playOnOpen) {
-            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
-              root.playOnOpen = false; event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.launchPlayOnChoice(); event.accepted = true
-            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K || event.key === Qt.Key_Left || event.key === Qt.Key_H) {
-              var n = root.playOnChoices.length
-              if (n) root.playOnIndex = (root.playOnIndex - 1 + n) % n
-              event.accepted = true
-            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Right || event.key === Qt.Key_L) {
-              var m = root.playOnChoices.length
-              if (m) root.playOnIndex = (root.playOnIndex + 1) % m
-              event.accepted = true
-            }
-            return
-          }
-          if (event.key === Qt.Key_Escape) {
-            if (root.filterText) {
-              root.filterText = ""
-              searchInput.text = ""
-              root.refreshList()
-            } else if (root.homeActive && root.focusZone === "details") {
-              root.focusZone = "shelf"
-            } else if (root.screen !== "home" && root.screen !== "settings") {
-              root.screen = "home"
-              root.focusZone = "shelf"
-              root.refreshList()
-            } else if (root.screen === "settings") {
-              root.screen = "home"
-              root.refreshList()
-            } else {
-              root.dismiss()
-            }
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.handleIntent("accept")
-            event.accepted = true
-          } else if (event.key === Qt.Key_X || event.key === Qt.Key_I) {
-            root.openOptions(); event.accepted = true
-          } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
-            root.moveSelection(0, -1); event.accepted = true
-          } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
-            root.moveSelection(0, 1); event.accepted = true
-          } else if (event.key === Qt.Key_Left || event.key === Qt.Key_H) {
-            root.moveSelection(-1, 0); event.accepted = true
-          } else if (event.key === Qt.Key_Right || event.key === Qt.Key_L) {
-            root.moveSelection(1, 0); event.accepted = true
-          } else if (event.key === Qt.Key_Tab) {
-            root.handleIntent("tab_next"); event.accepted = true
-          } else if (event.key === Qt.Key_Backtab) {
-            root.handleIntent("tab_prev"); event.accepted = true
-          } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_Y) {
-            root.screen = "search"
-            searchInput.forceActiveFocus()
-            event.accepted = true
-          } else if (event.key === Qt.Key_M || event.key === Qt.Key_S && event.modifiers === Qt.NoModifier) {
-            // Start-equivalent
-            if (event.key === Qt.Key_M) {
-              root.handleIntent("menu"); event.accepted = true
-            }
-          } else if (event.key === Qt.Key_F5) {
-            if (root.service) root.service.rescan()
-            event.accepted = true
-          } else if (event.text && event.text.length === 1 && event.text >= " " && root.screen !== "settings") {
-            root.screen = "search"
-            root.filterText += event.text
-            searchInput.text = root.filterText
-            root.refreshList()
-            searchInput.forceActiveFocus()
-            event.accepted = true
-          }
-        }
+        Keys.onPressed: function(event) { root.handleKey(event) }
       }
 
-      // Play on… picker (same title from two stores)
+      // Per-game Options sheet: Play on… choices, favorite, hide, refresh metadata
       Rectangle {
         anchors.fill: parent
         visible: root.playOnOpen
@@ -1570,11 +2000,13 @@ Item {
             spacing: Style.spacing.sm
 
             Text {
-              text: "Play on…"
+              Layout.fillWidth: true
+              text: root.optionsTitle || "Options"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.heading
               font.bold: true
+              elide: Text.ElideRight
             }
             Repeater {
               model: root.playOnChoices
@@ -1597,7 +2029,10 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  onEntered: root.playOnIndex = index
+                  onPositionChanged: function(mouse) {
+                    if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                      root.playOnIndex = index
+                  }
                   onClicked: {
                     root.playOnIndex = index
                     root.launchPlayOnChoice()
@@ -1606,7 +2041,7 @@ Item {
               }
             }
             Text {
-              text: "A / Enter  play   ·   B / Esc  back"
+              text: "A / Enter  select   ·   B / Esc  back"
               color: root.foreground
               opacity: 0.5
               font.family: root.fontFamily
@@ -1786,6 +2221,13 @@ Item {
   }
 
   Timer {
+    id: metaDebounce
+    interval: 200
+    repeat: false
+    onTriggered: root.ensureMeta(root.focusedGame)
+  }
+
+  Timer {
     id: menuPersistTimer
     interval: 160
     repeat: true
@@ -1828,6 +2270,14 @@ Item {
   }
 
   FileView {
+    id: stateView
+    path: root.stateFile
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: root.loadStateFromDisk()
+  }
+
+  FileView {
     id: metaView
     path: root.metaFile
     watchChanges: true
@@ -1865,9 +2315,13 @@ Item {
       if (!root.pendingMetaId)
         return
       var next = root.pendingMetaId
+      var force = root.pendingMetaForce
       root.pendingMetaId = ""
+      root.pendingMetaForce = false
       Qt.callLater(function() {
-        if (root.focusedGame && root.focusedGame.id === next)
+        if (force)
+          root.startMeta(next, true)
+        else if (root.focusedGame && root.focusedGame.id === next)
           root.ensureMeta(root.focusedGame)
       })
     }
