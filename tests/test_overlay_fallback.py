@@ -34,11 +34,18 @@ class TestParseLibraryText(unittest.TestCase):
         self.assertEqual(len(parsed["games"]), 2)
         self.assertEqual(parsed["games"][0]["title"], "Enshrouded")
 
-    def test_prefer_service_then_cache(self):
-        cache = [{"id": "cached"}]
-        self.assertEqual(resolved_games([{"id": "live"}], cache)[0]["id"], "live")
-        self.assertEqual(resolved_games([], cache)[0]["id"], "cached")
-        self.assertEqual(resolved_games(None, cache)[0]["id"], "cached")
+    def test_union_includes_cache_only_icon_games(self):
+        cache = [
+            {"id": "steam:1", "title": "Enshrouded"},
+            {"id": "desktop:wow", "title": "World of Warcraft", "art": {"iconOnly": True}},
+        ]
+        live = [{"id": "steam:1", "title": "Enshrouded (live)"}]
+        merged = resolved_games(live, cache)
+        self.assertEqual([g["id"] for g in merged], ["steam:1", "desktop:wow"])
+        self.assertEqual(merged[0]["title"], "Enshrouded")
+        self.assertTrue(merged[1]["art"]["iconOnly"])
+        self.assertEqual(resolved_games([], cache)[1]["id"], "desktop:wow")
+        self.assertEqual(resolved_games(None, cache)[1]["id"], "desktop:wow")
         self.assertEqual(resolved_games(None, None), [])
 
 
@@ -55,7 +62,44 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("omarchy-restart-shell", qml)
         self.assertIn("function parseLibraryText", js)
         self.assertIn("function resolvedGames", js)
+        self.assertIn("function libraryEntries", js)
+        self.assertIn("shelf=", qml)
+        self.assertIn("cache=", qml)
         self.assertIn("function libraryFilePath", js)
+        self.assertIn("function homeShelf", js)
+        self.assertIn("function sourceBadges", js)
+        self.assertIn("function alsoOnIsWrapper", js)
+        self.assertIn("function isIconOnly", js)
+        self.assertIn("function isSmallArt", js)
+        self.assertNotIn("cover === game.art.icon", js)
+        self.assertIn("function hasPlayOn", js)
+        self.assertIn("homeRow", qml)
+        self.assertIn("focusZone", qml)
+        self.assertIn("menuPinned", qml)
+        self.assertIn('surface === "quickmenu"', qml)
+        self.assertIn("showQuickMenu", qml)
+        self.assertIn("persistQuickMenu", qml)
+        self.assertIn("Image.Pad", qml)
+        self.assertIn("isSmallArt", qml)
+        self.assertIn("clip: true", qml)
+        self.assertIn("PreserveAspectCrop", qml)
+
+    def test_show_quick_menu_logs_and_persists(self):
+        qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
+        service = (ROOT / "Service.qml").read_text(encoding="utf-8")
+        menu = (ROOT / "QuickMenu.qml").read_text(encoding="utf-8")
+        self.assertIn('matt-dance.arcade: showQuickMenu persist=', qml)
+        self.assertIn('matt-dance.arcade: open surface=quickmenu persist=', qml)
+        self.assertIn('{"surface":"quickmenu","persist":true}', qml)
+        self.assertIn("system menu stays pinned", qml)
+        self.assertIn("summonQuickMenu", service)
+        self.assertIn("persistQuickMenu", service)
+        self.assertIn("service showQuickMenu", service)
+        self.assertIn("openQuickMenu", service)
+        self.assertIn("re-summoning system menu", service)
+        self.assertIn("QuickMenu.open", menu)
+        self.assertIn("signal dismissed", menu)
+        self.assertIn("if (!text || !String(text).trim())", menu)
 
     def test_service_logs_and_starts_arcaded_via_python(self):
         qml = (ROOT / "Service.qml").read_text(encoding="utf-8")

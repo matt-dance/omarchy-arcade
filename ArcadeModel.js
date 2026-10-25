@@ -36,10 +36,43 @@ function parseLibraryText(text) {
   }
 }
 
+function libraryEntries(games) {
+  var out = []
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var g = list[i]
+    if (g && g.id)
+      out.push(g)
+  }
+  return out
+}
+
 function resolvedGames(service, localGames) {
-  if (service && service.games && service.games.length)
-    return service.games
-  return localGames || []
+  // library.json is the display source of truth. A keepLoaded service can
+  // still hold a stale shorter list after a rescan (FileView miss on atomic replace).
+  var cache = libraryEntries(localGames)
+  var live = libraryEntries(service && service.games)
+  if (!cache.length)
+    return live
+  if (!live.length)
+    return cache
+  var byId = {}
+  var order = []
+  function add(g, overwrite) {
+    var id = String(g.id)
+    if (!byId[id])
+      order.push(id)
+    if (overwrite || !byId[id])
+      byId[id] = g
+  }
+  for (var i = 0; i < live.length; i++)
+    add(live[i], false)
+  for (var j = 0; j < cache.length; j++)
+    add(cache[j], true)
+  var out = []
+  for (var k = 0; k < order.length; k++)
+    out.push(byId[order[k]])
+  return out
 }
 
 function sourceLabel(source) {
@@ -55,9 +88,13 @@ function sourceLabel(source) {
     webapp: "Cloud",
     retroarch: "RetroArch",
     roms: "ROMs",
-    moonlight: "Moonlight"
+    moonlight: "Moonlight",
+    gog: "GOG",
+    epic: "Epic",
+    amazon: "Amazon"
   }
-  return map[source] || source || ""
+  var key = String(source || "").toLowerCase()
+  return map[key] || source || ""
 }
 
 function runnerBadge(runner) {
@@ -80,6 +117,135 @@ function filterGames(games, query) {
       out.push(g)
   }
   return out
+}
+
+function homeShelf(games) {
+  var items = (games || []).slice()
+  var played = []
+  var rest = []
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].lastPlayed)
+      played.push(items[i])
+    else
+      rest.push(items[i])
+  }
+  function byTitle(a, b) {
+    return String(a.sortTitle || a.title || "").localeCompare(String(b.sortTitle || b.title || ""))
+  }
+  played.sort(byTitle)
+  played.sort(function(a, b) {
+    var la = a.lastPlayed || ""
+    var lb = b.lastPlayed || ""
+    if (la === lb) return 0
+    return la < lb ? 1 : -1
+  })
+  rest.sort(byTitle)
+  return played.concat(rest)
+}
+
+function sourceBadges(game) {
+  if (!game) return []
+  var badges = []
+  var seen = {}
+  function add(label) {
+    if (!label || seen[label]) return
+    seen[label] = true
+    badges.push(label)
+  }
+  add(sourceLabel(game.source))
+  if (game.store)
+    add(sourceLabel(game.store))
+  var extras = game.alsoOn || []
+  for (var i = 0; i < extras.length; i++) {
+    var extra = extras[i]
+    if (!extra || typeof extra === "string" || alsoOnIsWrapper(extra))
+      continue
+    var label = sourceLabel(extra.source)
+    if (label && !seen[label])
+      add("Play on " + label)
+  }
+  return badges
+}
+
+function alsoOnIsWrapper(extra) {
+  if (!extra) return false
+  var extraId = String(extra.id || "")
+  if (extraId.indexOf("desktop:steam:") === 0 || extraId.indexOf("steam_app_") === 0)
+    return true
+  var launch = extra.launch || {}
+  var value = launch.value
+  var text = typeof value === "string" ? value : (value && value.join ? value.join(" ") : "")
+  if (String(text).indexOf("steam://rungameid/") !== -1)
+    return true
+  var track = extra.track || {}
+  if (String(extra.source || "") === "desktop" && track.steamAppId)
+    return true
+  return false
+}
+
+function hasPlayOn(game) {
+  return playOnChoices(game).length > 1
+}
+
+function formatPlaytime(minutes) {
+  if (minutes === undefined || minutes === null || minutes === "")
+    return ""
+  var n = Number(minutes)
+  if (isNaN(n) || n < 0)
+    return ""
+  if (n < 60)
+    return Math.round(n) + " min"
+  var hours = n / 60
+  if (hours < 10)
+    return (Math.round(hours * 10) / 10) + " h"
+  return Math.round(hours) + " h"
+}
+
+function formatLastPlayed(iso) {
+  if (!iso) return ""
+  var day = String(iso).slice(0, 10)
+  if (day.length < 10 || day[4] !== "-" || day[7] !== "-")
+    return String(iso)
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  var month = parseInt(day.slice(5, 7), 10)
+  var d = parseInt(day.slice(8, 10), 10)
+  if (!month || month < 1 || month > 12 || !d)
+    return day
+  return months[month - 1] + " " + d + ", " + day.slice(0, 4)
+}
+
+function playMeta(game) {
+  if (!game) return ""
+  if (game.lastPlayed)
+    return "Last played " + formatLastPlayed(game.lastPlayed)
+  if (game.playtimeMinutes)
+    return formatPlaytime(game.playtimeMinutes) + " played"
+  return ""
+}
+
+function heroUrl(game) {
+  if (game && game.art && game.art.hero)
+    return game.art.hero
+  return ""
+}
+
+function coverUrl(game) {
+  if (game && game.art && game.art.cover)
+    return game.art.cover
+  return ""
+}
+
+function isIconOnly(game) {
+  return !!(game && game.art && game.art.iconOnly)
+}
+
+function isSmallArt(game, implicitW, implicitH) {
+  var w = Number(implicitW) || 0
+  var h = Number(implicitH) || 0
+  // Measured pixels win over a stale iconOnly flag (GFN box art lives in Icon=).
+  if (w > 0 || h > 0)
+    return Math.max(w, h) < 256
+  return isIconOnly(game)
 }
 
 function recentGames(games, limit) {
@@ -130,7 +296,7 @@ function playOnChoices(game) {
   var extra = game.alsoOn || []
   for (var i = 0; i < extra.length; i++) {
     var a = extra[i]
-    if (!a || typeof a === "string")
+    if (!a || typeof a === "string" || alsoOnIsWrapper(a))
       continue
     out.push({
       id: a.id || game.id,

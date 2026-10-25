@@ -7,6 +7,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 
 _TITLE_STRIP = re.compile(r"[^a-z0-9]+")
@@ -95,9 +96,119 @@ class ArtSpec:
     hero: str | None = None
     logo: str | None = None
     icon: str | None = None
+    icon_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = {
+            "cover": self.cover,
+            "hero": self.hero,
+            "logo": self.logo,
+            "icon": self.icon,
+        }
+        if self.icon_only:
+            d["iconOnly"] = True
+        return d
+
+
+def path_from_uri(uri: str | None) -> Path | None:
+    if not uri:
+        return None
+    text = str(uri)
+    if text.startswith("file://"):
+        parsed = urlparse(text)
+        path = unquote(parsed.path or "")
+        return Path(path) if path else None
+    path = Path(text)
+    return path if path.is_absolute() else None
+
+
+def image_max_edge(path: Path) -> int | None:
+    """Largest pixel edge of a PNG/GIF/JPEG/ICO/WebP, or None if unknown."""
+    try:
+        with path.open("rb") as fh:
+            data = fh.read(65536)
+    except OSError:
+        return None
+    if len(data) < 24:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        w = int.from_bytes(data[16:20], "big")
+        h = int.from_bytes(data[20:24], "big")
+        return max(w, h)
+    if data.startswith((b"GIF87a", b"GIF89a")) and len(data) >= 10:
+        w = int.from_bytes(data[6:8], "little")
+        h = int.from_bytes(data[8:10], "little")
+        return max(w, h)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        if data[12:16] == b"VP8X" and len(data) >= 30:
+            w = 1 + int.from_bytes(data[24:27], "little")
+            h = 1 + int.from_bytes(data[27:30], "little")
+            return max(w, h)
+        if data[12:16] == b"VP8 " and len(data) >= 30:
+            w = int.from_bytes(data[26:28], "little") & 0x3FFF
+            h = int.from_bytes(data[28:30], "little") & 0x3FFF
+            return max(w, h)
+    if data[:4] == b"\x00\x00\x01\x00" and len(data) >= 8:
+        count = int.from_bytes(data[4:6], "little") or 1
+        w = data[6] or 256
+        h = data[7] or 256
+        return max(w, h) if count else None
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB}:
+                h = int.from_bytes(data[i + 5 : i + 7], "big")
+                w = int.from_bytes(data[i + 7 : i + 9], "big")
+                return max(w, h)
+            if marker == 0xD8 or marker == 0xD9:
+                i += 2
+                continue
+            if i + 4 > len(data):
+                break
+            seglen = int.from_bytes(data[i + 2 : i + 4], "big")
+            if seglen < 2:
+                break
+            i += 2 + seglen
+    return None
+
+
+def stamp_icon_only(art: ArtSpec) -> ArtSpec:
+    """Mark tiny launcher icons so QML will not stretch them as covers.
+
+    Only the pixel size (or an SVG) counts. GFN box art is often stored as
+    Icon= under ~/.local/share/icons/gfn and must stay a cropped cover.
+    """
+    if art.icon_only or not art.cover:
+        return art
+    try:
+        path = path_from_uri(str(art.cover))
+        if path is None:
+            return art
+        if path.suffix.casefold() == ".svg":
+            art.icon_only = True
+            return art
+        edge = image_max_edge(path)
+        if edge is not None and edge < 256:
+            art.icon_only = True
+    except Exception:
+        return art
+    return art
+
+
+def art_from_dict(data: dict[str, Any] | None) -> ArtSpec:
+    """Accept both Python and library.json keys (`iconOnly`)."""
+    raw = data or {}
+    return ArtSpec(
+        cover=raw.get("cover"),
+        hero=raw.get("hero"),
+        logo=raw.get("logo"),
+        icon=raw.get("icon"),
+        icon_only=bool(raw.get("iconOnly") or raw.get("icon_only")),
+    )
 
 
 @dataclass
@@ -136,6 +247,7 @@ class Game:
         return t
 
     def to_dict(self) -> dict[str, Any]:
+        stamp_icon_only(self.art)
         return {
             "id": self.id,
             "title": self.title,
@@ -190,6 +302,52 @@ def _has_also_on(entries: list[Any], game_id: str) -> bool:
     return any(_also_on_id(e) == game_id for e in entries)
 
 
+def _launch_text(game: Game) -> str:
+    if not game.launch:
+        return ""
+    value = game.launch.value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(p) for p in value)
+    return str(value)
+
+
+def is_steam_desktop_wrapper(game: Game) -> bool:
+    """True for Steam's own .desktop shortcuts (steam://rungameid or generated)."""
+    if game.source == "steam":
+        return False
+    if game.steam_app_id and game.source == "desktop":
+        return True
+    text = _launch_text(game).casefold()
+    if "steam://rungameid/" in text:
+        return True
+    gid = (game.id or "").casefold()
+    return gid.startswith("desktop:steam:") or gid.startswith("steam_app_")
+
+
+def should_record_also_on(keeper: Game, other: Game) -> bool:
+    """Play on… only for real alternate stores, not Steam .desktop wrappers."""
+    if keeper.source == other.source:
+        return False
+    if is_steam_desktop_wrapper(other) or is_steam_desktop_wrapper(keeper):
+        return False
+    if keeper.steam_app_id and other.steam_app_id and keeper.steam_app_id == other.steam_app_id:
+        if "desktop" in {keeper.source, other.source}:
+            return False
+    return True
+
+
+def _absorb_art(dst: Game, src: Game) -> None:
+    if src.art.cover and (not dst.art.cover or (dst.art.icon_only and not src.art.icon_only)):
+        dst.art.cover = src.art.cover
+        dst.art.icon_only = bool(src.art.icon_only)
+    if not dst.art.hero and src.art.hero:
+        dst.art.hero = src.art.hero
+    if not dst.art.icon and src.art.icon:
+        dst.art.icon = src.art.icon
+
+
 def merge_games(games: list[Game]) -> list[Game]:
     """Collapse duplicates. Prefer richer sources over bare .desktop wrappers."""
     source_rank = {
@@ -223,8 +381,13 @@ def merge_games(games: list[Game]) -> list[Game]:
 
         # Prefer non-desktop over desktop wrappers; keep higher-ranked source.
         if source_rank.get(game.source, 99) < source_rank.get(primary.source, 99):
-            if primary.source != game.source and not _has_also_on(game.also_on, primary.id):
+            if should_record_also_on(game, primary) and not _has_also_on(game.also_on, primary.id):
                 game.also_on = [*game.also_on, also_on_payload(primary)]
+            _absorb_art(game, primary)
+            if game.playtime_minutes is None and primary.playtime_minutes is not None:
+                game.playtime_minutes = primary.playtime_minutes
+            if not game.last_played and primary.last_played:
+                game.last_played = primary.last_played
             for key in game.dedupe_keys:
                 by_key[key] = game
             # Replace order entry
@@ -233,11 +396,9 @@ def merge_games(games: list[Game]) -> list[Game]:
                     order[i] = game.dedupe_keys[0]
                     break
         else:
-            if game.source != primary.source and not _has_also_on(primary.also_on, game.id):
+            if should_record_also_on(primary, game) and not _has_also_on(primary.also_on, game.id):
                 primary.also_on = [*primary.also_on, also_on_payload(game)]
-            # Absorb art / playtime when missing
-            if not primary.art.cover and game.art.cover:
-                primary.art.cover = game.art.cover
+            _absorb_art(primary, game)
             if primary.playtime_minutes is None and game.playtime_minutes is not None:
                 primary.playtime_minutes = game.playtime_minutes
             if not primary.last_played and game.last_played:
@@ -274,11 +435,39 @@ def parse_library_text(text: str | None) -> dict[str, Any]:
     }
 
 
+def _library_entries(games: list[Any] | None) -> list[Any]:
+    out: list[Any] = []
+    for game in games or []:
+        if isinstance(game, dict) and game.get("id"):
+            out.append(game)
+        elif getattr(game, "id", None):
+            out.append(game)
+    return out
+
+
 def resolved_games(service_games: list[Any] | None, local_games: list[Any] | None) -> list[Any]:
-    """Prefer an in-memory service library; fall back to the on-disk cache."""
-    if service_games:
-        return list(service_games)
-    return list(local_games or [])
+    """Union service + library.json by id. The on-disk cache always wins per id."""
+    cache = _library_entries(local_games)
+    live = _library_entries(service_games)
+    if not cache:
+        return live
+    if not live:
+        return cache
+    by_id: dict[str, Any] = {}
+    order: list[str] = []
+
+    def add(game: Any, overwrite: bool) -> None:
+        gid = str(game.get("id") if isinstance(game, dict) else game.id)
+        if gid not in by_id:
+            order.append(gid)
+        if overwrite or gid not in by_id:
+            by_id[gid] = game
+
+    for game in live:
+        add(game, False)
+    for game in cache:
+        add(game, True)
+    return [by_id[gid] for gid in order]
 
 
 def write_library(path: Path, games: list[Game], errors: list[ScanError]) -> None:

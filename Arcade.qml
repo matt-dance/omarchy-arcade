@@ -38,6 +38,11 @@ Item {
   property var localScanErrors: []
   property bool localScanPending: false
   property string localScanError: ""
+  property string focusZone: "shelf"   // shelf | details
+  property int detailButton: 0         // 0 Play, 1 Options
+  property var focusedGame: null
+  property bool menuPinned: false
+  property bool libraryBeneathMenu: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -57,7 +62,33 @@ Item {
   readonly property real uiScale: 1.25
   readonly property int cardW: Style.space(Math.round(160 * uiScale))
   readonly property int cardH: Style.space(Math.round(240 * uiScale))
+  readonly property int homeCardW: Style.space(Math.round(220 * uiScale))
+  readonly property int homeCardH: Style.space(Math.round(330 * uiScale))
   readonly property int gridGap: Style.space(Math.round(16 * uiScale))
+  readonly property bool homeActive: root.screen === "home" && root.filterText.length === 0
+  readonly property var defaultHints: [
+    { key: "A", label: "Play" },
+    { key: "B", label: "Back" },
+    { key: "Y", label: "Search" },
+    { key: "LB/RB", label: "Home/Library" },
+    { key: "X", label: "Options" },
+    { key: "Start", label: "Settings" }
+  ]
+  readonly property var homeShelfHints: [
+    { key: "A", label: "Play" },
+    { key: "Left/Right", label: "Games" },
+    { key: "Down", label: "Details" },
+    { key: "X", label: "Options" },
+    { key: "LB/RB", label: "Library" },
+    { key: "B", label: "Close" }
+  ]
+  readonly property var homeDetailsHints: [
+    { key: "A", label: "Select" },
+    { key: "Left/Right", label: "Buttons" },
+    { key: "Up", label: "Games" },
+    { key: "X", label: "Options" },
+    { key: "B", label: "Row" }
+  ]
 
   function open(payloadJson) {
     var payload = {}
@@ -68,16 +99,20 @@ Item {
       payload = {}
     }
     if (payload && payload.surface === "quickmenu") {
+      console.warn("matt-dance.arcade: open surface=quickmenu persist=" + !!payload.persist
+                   + " library=" + root.opened)
       root.showQuickMenu(payloadJson)
       return
     }
-    if (quickMenu && quickMenu.opened)
+    if (quickMenu && quickMenu.opened && !root.menuPinned)
       quickMenu.close()
     root.playOnOpen = false
     root.opened = true
     root.screen = "home"
     root.filterText = ""
     root.selectedIndex = 0
+    root.focusZone = "shelf"
+    root.detailButton = 0
     root.loadLibraryFromDisk()
     root.refreshList()
     root.ensureLibrary()
@@ -88,11 +123,19 @@ Item {
 
   function close() {
     root.opened = false
+    if (root.menuPinned) {
+      console.warn("matt-dance.arcade: close library; system menu stays pinned")
+      return
+    }
     if (root.service && typeof root.service.setUiMode === "function")
       root.service.setUiMode(false)
   }
 
   function dismiss() {
+    if (root.menuPinned && quickMenu && quickMenu.opened) {
+      console.warn("matt-dance.arcade: dismiss skipped; system menu is pinned")
+      return
+    }
     root.close()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide(Model.pluginId(root.manifest))
@@ -115,7 +158,7 @@ Item {
     if (!parsed.ok)
       root.localScanError = parsed.error || "library.json parse failed"
     console.warn("matt-dance.arcade: overlay cache " + root.libraryFile + " games=" + root.localGames.length
-                 + " service=" + (root.service ? "yes" : "no"))
+                 + " service=" + (root.service && root.service.games ? root.service.games.length : "no"))
     root.refreshList()
   }
 
@@ -152,12 +195,19 @@ Item {
 
   function refreshList() {
     var games = root.libraryGames()
-    if (root.screen === "home" && !root.filterText)
-      root.visibleGames = Model.recentGames(games, 24)
+    if (root.homeActive)
+      root.visibleGames = Model.homeShelf(games)
     else
       root.visibleGames = Model.filterGames(games, root.filterText)
     if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
+    root.updateFocused()
+    var cacheN = root.localGames ? root.localGames.length : 0
+    var serviceN = (root.service && root.service.games) ? root.service.games.length : 0
+    console.warn("matt-dance.arcade: shelf=" + root.visibleGames.length
+                 + " cache=" + cacheN
+                 + " service=" + serviceN
+                 + " resolved=" + games.length)
     var n = games.length
     var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
     if (scanning && n === 0)
@@ -167,12 +217,42 @@ Item {
     else if (!root.service)
       root.statusText = n + " games (cached) · service not loaded — omarchy-restart-shell"
     else if (root.screen === "home")
-      root.statusText = "Recently played · " + n + " games total"
+      root.statusText = "Home · " + n + " games"
     else
       root.statusText = root.visibleGames.length + " of " + n + " games"
   }
 
+  function updateFocused() {
+    if (root.selectedIndex >= 0 && root.selectedIndex < root.visibleGames.length)
+      root.focusedGame = root.visibleGames[root.selectedIndex]
+    else
+      root.focusedGame = null
+  }
+
+  function moveHome(dx, dy) {
+    var count = root.visibleGames.length
+    if (count === 0)
+      return
+    if (root.focusZone === "shelf") {
+      if (dx !== 0)
+        root.selectedIndex = Math.max(0, Math.min(count - 1, root.selectedIndex + dx))
+      if (dy > 0)
+        root.focusZone = "details"
+      if (homeRow)
+        homeRow.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+    } else {
+      if (dx !== 0)
+        root.detailButton = dx < 0 ? 0 : 1
+      if (dy < 0)
+        root.focusZone = "shelf"
+    }
+  }
+
   function moveSelection(dx, dy) {
+    if (root.homeActive) {
+      root.moveHome(dx, dy)
+      return
+    }
     var cols = Math.max(1, Math.floor((grid.width + gridGap) / (cardW + gridGap)))
     var count = root.visibleGames.length
     if (count === 0) return
@@ -182,21 +262,26 @@ Item {
     if (dy !== 0)
       idx = Math.max(0, Math.min(count - 1, idx + dy * cols))
     root.selectedIndex = idx
-    grid.positionViewAtIndex(idx, GridView.Contain)
+    if (grid)
+      grid.positionViewAtIndex(idx, GridView.Contain)
   }
 
   function activateSelected() {
     if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
       return
+    root.launchResolved(root.visibleGames[root.selectedIndex])
+  }
+
+  function openOptions() {
+    if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
+      return
     var game = root.visibleGames[root.selectedIndex]
     var choices = Model.playOnChoices(game)
-    if (choices.length > 1) {
-      root.playOnChoices = choices
-      root.playOnIndex = 0
-      root.playOnOpen = true
+    if (!choices.length)
       return
-    }
-    root.launchResolved(game)
+    root.playOnChoices = choices
+    root.playOnIndex = 0
+    root.playOnOpen = true
   }
 
   function launchPlayOnChoice() {
@@ -215,12 +300,63 @@ Item {
     return "ok"
   }
 
+  function parsePayload(payloadJson) {
+    try {
+      if (payloadJson && String(payloadJson).length)
+        return JSON.parse(payloadJson)
+    } catch (e) {}
+    return {}
+  }
+
   function showQuickMenu(payloadJson) {
-    if (quickMenu) {
-      quickMenu.open(payloadJson || "{}")
-      return "ok"
+    var payload = root.parsePayload(payloadJson)
+    var persist = !!(payload && payload.persist)
+    console.warn("matt-dance.arcade: showQuickMenu persist=" + persist
+                 + " library=" + root.opened
+                 + " menu=" + (quickMenu && quickMenu.opened ? "open" : "closed")
+                 + " service=" + (root.service ? "yes" : "no"))
+    if (root.service) {
+      root.service.quickMenuWanted = true
+      if (typeof root.service.setUiMode === "function")
+        root.service.setUiMode(true)
     }
-    return "unknown"
+    if (!quickMenu) {
+      console.warn("matt-dance.arcade: showQuickMenu failed — QuickMenu child missing")
+      return "unknown"
+    }
+    root.menuPinned = true
+    if (root.opened)
+      root.libraryBeneathMenu = true
+    quickMenu.open(payloadJson || "{}")
+    console.warn("matt-dance.arcade: showQuickMenu opened menuPinned=true libraryBeneath="
+                 + root.libraryBeneathMenu)
+    // Host `shell call` often unmaps the overlay after the method returns.
+    // Re-summon as the menu surface so the plugin stays mapped.
+    if (!persist && root.service && typeof root.service.persistQuickMenu === "function")
+      root.service.persistQuickMenu()
+    else if (!persist) {
+      menuPersistTimer.ticks = 0
+      menuPersistTimer.restart()
+    }
+    return "ok"
+  }
+
+  function onQuickMenuDismissed() {
+    console.warn("matt-dance.arcade: system menu dismissed libraryBeneath=" + root.libraryBeneathMenu
+                 + " library=" + root.opened)
+    root.menuPinned = false
+    if (root.service)
+      root.service.quickMenuWanted = false
+    if (root.libraryBeneathMenu && root.opened) {
+      root.libraryBeneathMenu = false
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      return
+    }
+    root.libraryBeneathMenu = false
+    if (!root.opened && root.shell && typeof root.shell.hide === "function")
+      root.shell.hide(Model.pluginId(root.manifest))
+    if (root.service && typeof root.service.setUiMode === "function")
+      root.service.setUiMode(false)
   }
 
   function status() {
@@ -230,34 +366,56 @@ Item {
   }
 
   function handleIntent(name) {
+    if (quickMenu && quickMenu.opened)
+      return
     if (!root.opened) return
     if (root.playOnOpen) {
       if (name === "accept") root.launchPlayOnChoice()
       else if (name === "back") root.playOnOpen = false
       return
     }
-    if (name === "accept") root.activateSelected()
-    else if (name === "back") {
+    if (name === "accept") {
+      if (root.screen === "settings") {
+        root.screen = "home"
+        root.refreshList()
+      } else if (root.homeActive && root.focusZone === "details" && root.detailButton === 1) {
+        root.openOptions()
+      } else {
+        root.activateSelected()
+      }
+    } else if (name === "back") {
       if (root.filterText) root.filterText = ""
-      else if (root.screen !== "home") root.screen = "home"
-      else root.dismiss()
+      else if (root.homeActive && root.focusZone === "details") root.focusZone = "shelf"
+      else if (root.screen !== "home") {
+        root.screen = "home"
+        root.focusZone = "shelf"
+      } else {
+        root.dismiss()
+      }
       root.refreshList()
     } else if (name === "search") {
       root.screen = "search"
       root.refreshList()
-    } else if (name === "menu" || name === "options") {
+    } else if (name === "options") {
+      root.openOptions()
+    } else if (name === "menu") {
       root.screen = root.screen === "settings" ? "home" : "settings"
+      root.focusZone = "shelf"
       root.refreshList()
     } else if (name === "tab_next") {
       root.screen = root.screen === "home" ? "library" : "home"
       root.selectedIndex = 0
+      root.focusZone = "shelf"
+      root.detailButton = 0
       root.refreshList()
     } else if (name === "tab_prev") {
       root.screen = root.screen === "library" ? "home" : "library"
       root.selectedIndex = 0
+      root.focusZone = "shelf"
+      root.detailButton = 0
       root.refreshList()
-    } else if (name === "page_down") root.moveSelection(0, 2)
-    else if (name === "page_up") root.moveSelection(0, -2)
+    } else if (name === "page_down") root.moveSelection(root.homeActive ? 4 : 0, root.homeActive ? 0 : 2)
+    else if (name === "page_up") root.moveSelection(root.homeActive ? -4 : 0, root.homeActive ? 0 : -2)
   }
 
   onServiceChanged: {
@@ -269,6 +427,7 @@ Item {
     target: root.service
     function onLibraryChanged() { root.refreshList() }
     function onNav(dir, repeat) {
+      if (quickMenu && quickMenu.opened) return
       if (!root.opened) return
       if (root.playOnOpen) {
         var n = root.playOnChoices.length
@@ -416,12 +575,305 @@ Item {
           }
         }
 
-        // Game grid
+        // Steam Deck-style Home: horizontal shelf + live details
+        ColumnLayout {
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          visible: root.screen === "home"
+          spacing: Style.spacing.md
+
+          ListView {
+            id: homeRow
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.homeCardH * 1.22 + root.gridGap
+            orientation: ListView.Horizontal
+            clip: true
+            spacing: root.gridGap
+            model: root.visibleGames
+            boundsBehavior: Flickable.StopAtBounds
+            highlightFollowsCurrentItem: true
+            preferredHighlightBegin: Style.spacing.lg
+            preferredHighlightEnd: width - root.homeCardW * 1.2
+            highlightRangeMode: ListView.ApplyRange
+            currentIndex: root.selectedIndex
+
+            delegate: Item {
+              width: root.homeCardW * 1.16
+              height: homeRow.height
+              required property var modelData
+              required property int index
+              z: index === root.selectedIndex ? 2 : 1
+
+              Rectangle {
+                id: homeCard
+                width: root.homeCardW
+                height: root.homeCardH
+                anchors.centerIn: parent
+                radius: root.cornerRadius
+                clip: true
+                color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
+                border.width: index === root.selectedIndex ? Math.max(3, Style.space(3)) : 1
+                border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
+                scale: index === root.selectedIndex ? 1.12 : 1.0
+                opacity: index === root.selectedIndex ? 1 : 0.82
+                Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 140 } }
+
+                Image {
+                  id: homeCover
+                  anchors.fill: parent
+                  anchors.margins: 3
+                  clip: true
+                  source: Model.coverUrl(modelData)
+                  fillMode: Image.PreserveAspectCrop
+                  asynchronous: true
+                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
+                }
+
+                Rectangle {
+                  anchors.fill: parent
+                  anchors.margins: 3
+                  visible: !homeCover.visible
+                  color: "transparent"
+                  Image {
+                    id: homeSmallIcon
+                    anchors.centerIn: parent
+                    source: Model.coverUrl(modelData)
+                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                    asynchronous: true
+                    fillMode: Image.Pad
+                    cache: true
+                  }
+                  Column {
+                    anchors.centerIn: parent
+                    visible: homeSmallIcon.status !== Image.Ready
+                    spacing: Style.spacing.sm
+                    width: parent.width - Style.spacing.panelPadding
+                    Text {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      text: Model.initials(modelData.title)
+                      color: Commons.Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.displayLarge
+                      font.bold: true
+                    }
+                    Text {
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      wrapMode: Text.WordWrap
+                      maximumLineCount: 3
+                      elide: Text.ElideRight
+                      text: modelData.title || ""
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                  }
+                }
+
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  anchors.margins: Style.space(8)
+                  width: homeBadge.implicitWidth + Style.space(10)
+                  height: homeBadge.implicitHeight + Style.space(4)
+                  radius: height / 2
+                  color: Qt.rgba(0, 0, 0, 0.65)
+                  Text {
+                    id: homeBadge
+                    anchors.centerIn: parent
+                    text: Model.hasPlayOn(modelData)
+                          ? "Play on…"
+                          : Model.sourceLabel(modelData.source)
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: {
+                    root.selectedIndex = index
+                    root.focusZone = "shelf"
+                  }
+                  onClicked: {
+                    root.selectedIndex = index
+                    root.focusZone = "shelf"
+                    root.activateSelected()
+                  }
+                }
+              }
+            }
+          }
+
+          Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+
+            Image {
+              id: heroArt
+              anchors.fill: parent
+              source: Model.heroUrl(root.focusedGame)
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              visible: status === Image.Ready
+              opacity: 0.55
+            }
+
+            Image {
+              anchors.fill: parent
+              source: Model.coverUrl(root.focusedGame)
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              visible: heroArt.status !== Image.Ready && status === Image.Ready
+                       && !Model.isSmallArt(root.focusedGame, implicitWidth, implicitHeight)
+              opacity: 0.22
+              scale: 1.18
+            }
+
+            Rectangle {
+              anchors.fill: parent
+              gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.15) }
+                GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.25) }
+                GradientStop { position: 1.0; color: root.background }
+              }
+            }
+
+            ColumnLayout {
+              anchors.fill: parent
+              anchors.margins: Style.spacing.lg
+              spacing: Style.spacing.sm
+
+              Text {
+                Layout.fillWidth: true
+                text: root.focusedGame ? (root.focusedGame.title || "") : "No games"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.display
+                font.bold: true
+                elide: Text.ElideRight
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+              }
+
+              Flow {
+                Layout.fillWidth: true
+                spacing: Style.spacing.sm
+                Repeater {
+                  model: Model.sourceBadges(root.focusedGame)
+                  Rectangle {
+                    required property var modelData
+                    width: badgeText.implicitWidth + Style.space(14)
+                    height: badgeText.implicitHeight + Style.space(6)
+                    radius: height / 2
+                    color: Qt.rgba(0, 0, 0, 0.45)
+                    border.color: Commons.Color.accent
+                    border.width: 1
+                    Text {
+                      id: badgeText
+                      anchors.centerIn: parent
+                      text: modelData
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+              }
+
+              Text {
+                Layout.fillWidth: true
+                visible: Model.playMeta(root.focusedGame).length > 0
+                text: Model.playMeta(root.focusedGame)
+                color: root.foreground
+                opacity: 0.75
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Item { Layout.fillHeight: true }
+
+              RowLayout {
+                spacing: Style.spacing.md
+
+                Rectangle {
+                  Layout.preferredWidth: Style.space(160)
+                  Layout.preferredHeight: Style.space(48)
+                  radius: root.cornerRadius
+                  color: (root.focusZone === "details" && root.detailButton === 0)
+                         ? root.selectedBackground
+                         : Qt.rgba(1, 1, 1, 0.08)
+                  border.width: (root.focusZone === "details" && root.detailButton === 0) ? 2 : 1
+                  border.color: (root.focusZone === "details" && root.detailButton === 0)
+                                ? Commons.Color.accent
+                                : Qt.rgba(1, 1, 1, 0.16)
+                  Text {
+                    anchors.centerIn: parent
+                    text: "Play"
+                    color: (root.focusZone === "details" && root.detailButton === 0)
+                           ? root.selectedText
+                           : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onEntered: {
+                      root.focusZone = "details"
+                      root.detailButton = 0
+                    }
+                    onClicked: root.activateSelected()
+                  }
+                }
+
+                Rectangle {
+                  Layout.preferredWidth: Style.space(160)
+                  Layout.preferredHeight: Style.space(48)
+                  radius: root.cornerRadius
+                  color: (root.focusZone === "details" && root.detailButton === 1)
+                         ? root.selectedBackground
+                         : Qt.rgba(1, 1, 1, 0.08)
+                  border.width: (root.focusZone === "details" && root.detailButton === 1) ? 2 : 1
+                  border.color: (root.focusZone === "details" && root.detailButton === 1)
+                                ? Commons.Color.accent
+                                : Qt.rgba(1, 1, 1, 0.16)
+                  Text {
+                    anchors.centerIn: parent
+                    text: "Options"
+                    color: (root.focusZone === "details" && root.detailButton === 1)
+                           ? root.selectedText
+                           : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onEntered: {
+                      root.focusZone = "details"
+                      root.detailButton = 1
+                    }
+                    onClicked: root.openOptions()
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Library / Search grid
         GridView {
           id: grid
           Layout.fillWidth: true
           Layout.fillHeight: true
-          visible: root.screen !== "settings"
+          visible: root.screen === "library" || root.screen === "search"
           cellWidth: root.cardW + root.gridGap
           cellHeight: root.cardH + root.gridGap
           clip: true
@@ -440,6 +892,7 @@ Item {
               height: root.cardH
               anchors.centerIn: parent
               radius: root.cornerRadius
+              clip: true
               color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
               border.width: index === root.selectedIndex ? Math.max(2, Style.space(2)) : 1
               border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
@@ -449,12 +902,11 @@ Item {
                 id: cover
                 anchors.fill: parent
                 anchors.margins: 2
-                source: (modelData.art && modelData.art.cover) ? modelData.art.cover : ""
+                clip: true
+                source: Model.coverUrl(modelData)
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
-                visible: status === Image.Ready
-                sourceSize.width: root.cardW
-                sourceSize.height: root.cardH
+                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
               }
 
               Rectangle {
@@ -462,8 +914,18 @@ Item {
                 anchors.margins: 2
                 visible: !cover.visible
                 color: "transparent"
+                Image {
+                  id: librarySmallIcon
+                  anchors.centerIn: parent
+                  source: Model.coverUrl(modelData)
+                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                  asynchronous: true
+                  fillMode: Image.Pad
+                  cache: true
+                }
                 Column {
                   anchors.centerIn: parent
+                  visible: librarySmallIcon.status !== Image.Ready
                   spacing: Style.spacing.sm
                   width: parent.width - Style.spacing.panelPadding
                   Text {
@@ -500,7 +962,7 @@ Item {
                 Text {
                   id: badgeLabel
                   anchors.centerIn: parent
-                  text: (modelData.alsoOn && modelData.alsoOn.length)
+                  text: Model.hasPlayOn(modelData)
                         ? "Play on…"
                         : Model.sourceLabel(modelData.source)
                   color: root.foreground
@@ -529,14 +991,9 @@ Item {
           visible: root.screen !== "settings"
 
           Repeater {
-            model: [
-              { key: "A", label: "Play" },
-              { key: "B", label: "Back" },
-              { key: "Y", label: "Search" },
-              { key: "LB/RB", label: "Home/Library" },
-              { key: "Start", label: "Settings" },
-              { key: "Esc", label: "Close" }
-            ]
+            model: root.homeActive
+                   ? (root.focusZone === "details" ? root.homeDetailsHints : root.homeShelfHints)
+                   : root.defaultHints
             RowLayout {
               required property var modelData
               spacing: Style.spacing.xs
@@ -597,18 +1054,24 @@ Item {
               root.filterText = ""
               searchInput.text = ""
               root.refreshList()
+            } else if (root.homeActive && root.focusZone === "details") {
+              root.focusZone = "shelf"
+            } else if (root.screen !== "home" && root.screen !== "settings") {
+              root.screen = "home"
+              root.focusZone = "shelf"
+              root.refreshList()
+            } else if (root.screen === "settings") {
+              root.screen = "home"
+              root.refreshList()
             } else {
               root.dismiss()
             }
             event.accepted = true
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.screen === "settings") {
-              root.screen = "home"
-              root.refreshList()
-            } else {
-              root.activateSelected()
-            }
+            root.handleIntent("accept")
             event.accepted = true
+          } else if (event.key === Qt.Key_X || event.key === Qt.Key_I) {
+            root.openOptions(); event.accepted = true
           } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
             root.moveSelection(0, -1); event.accepted = true
           } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
@@ -718,12 +1181,37 @@ Item {
     }
   }
 
+  Timer {
+    id: menuPersistTimer
+    interval: 160
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      if (!root.menuPinned || ticks >= 2) {
+        console.warn("matt-dance.arcade: showQuickMenu persist stop pinned="
+                     + root.menuPinned + " ticks=" + ticks)
+        stop()
+        ticks = 0
+        return
+      }
+      ticks += 1
+      console.warn("matt-dance.arcade: showQuickMenu persist tick=" + ticks
+                   + " menu=" + (quickMenu && quickMenu.opened ? "open" : "closed"))
+      Quickshell.execDetached([
+        "omarchy-shell", "shell", "summon",
+        Model.pluginId(root.manifest),
+        '{"surface":"quickmenu","persist":true}'
+      ])
+    }
+  }
+
   QuickMenu {
     id: quickMenu
     shell: root.shell
     manifest: root.manifest
     pluginRegistry: root.pluginRegistry
     service: root.service
+    onDismissed: root.onQuickMenuDismissed()
   }
 
   FileView {
@@ -739,6 +1227,8 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         root.localScanPending = false
+        if (libraryView && typeof libraryView.reload === "function")
+          libraryView.reload()
         root.loadLibraryFromDisk()
       }
     }
@@ -755,6 +1245,8 @@ Item {
       root.loadLibraryFromDisk()
     }
   }
+
+  onSelectedIndexChanged: root.updateFocused()
 
   Component.onCompleted: {
     console.warn("matt-dance.arcade: overlay loaded; cache=" + root.libraryFile)

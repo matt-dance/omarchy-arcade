@@ -6,15 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from arcade.art import fetch_sgdb_image, search_sgdb_game_id
 from arcade.config import load_config
 from arcade.paths import arcade_cache_dir, expand_user, library_path
 
@@ -29,27 +27,14 @@ def _sgdb_key(cfg) -> str | None:
     return None
 
 
-def _fetch_sgdb(appid: int, key: str, dest: Path) -> str | None:
-    url = f"https://www.steamgriddb.com/api/v2/grids/steam/{appid}?dimensions=600x900&types=static"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return None
-    rows = (data.get("data") or []) if isinstance(data, dict) else []
-    if not rows:
-        return None
-    image_url = rows[0].get("url")
-    if not image_url:
-        return None
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with urllib.request.urlopen(image_url, timeout=30) as img:
-            dest.write_bytes(img.read())
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return None
-    return dest.as_uri()
+def _lookup(game: dict) -> tuple[str, int] | None:
+    appid = game.get("steamAppId")
+    if appid:
+        try:
+            return ("steam", int(appid))
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,23 +51,44 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     data = json.loads(lib_path.read_text(encoding="utf-8"))
     key = _sgdb_key(cfg)
+    if not key:
+        print(json.dumps({"updated": 0, "results": [], "reason": "no steamgriddb key"}))
+        return 0
     updated = 0
     results = []
     for game in data.get("games") or []:
         if args.ids and game["id"] not in args.ids:
             continue
-        art = game.get("art") or {}
-        if art.get("cover"):
+        art = game.setdefault("art", {})
+        icon_only = bool(art.get("iconOnly"))
+        need_cover = (not art.get("cover")) or icon_only
+        need_hero = not art.get("hero")
+        if not need_cover and not need_hero:
             continue
-        appid = game.get("steamAppId")
-        if not appid or not key:
+        lookup = _lookup(game)
+        if lookup is None:
+            sgdb_id = search_sgdb_game_id(str(game.get("title") or ""), key)
+            if sgdb_id is not None:
+                lookup = ("game", sgdb_id)
+        if lookup is None:
             continue
-        dest = arcade_cache_dir() / "art" / game["id"].replace(":", "_") / "cover.jpg"
-        uri = _fetch_sgdb(int(appid), key, dest)
-        if uri:
-            game.setdefault("art", {})["cover"] = uri
-            updated += 1
-            results.append({"id": game["id"], "cover": uri})
+        dest_dir = arcade_cache_dir() / "art" / game["id"].replace(":", "_")
+        changed = {}
+        if need_cover:
+            uri = fetch_sgdb_image("grids", lookup, key, dest_dir / "cover.jpg", "600x900")
+            if uri:
+                art["cover"] = uri
+                art.pop("iconOnly", None)
+                changed["cover"] = uri
+                updated += 1
+        if need_hero:
+            uri = fetch_sgdb_image("heroes", lookup, key, dest_dir / "hero.jpg", "1920x620")
+            if uri:
+                art["hero"] = uri
+                changed["hero"] = uri
+                updated += 1
+        if changed:
+            results.append({"id": game["id"], "lookup": list(lookup), **changed})
         if updated >= args.limit:
             break
     if updated:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -60,6 +61,74 @@ _SKIP_EXEC_PREFIXES = (
     "steam %U",
     "steam steam://",
 )
+
+_STEAM_APP_NUMERIC = re.compile(r"^steam_app_(\d+)$")
+_STEAM_BINARIES = {"steam", "steam-runtime", "steam.sh"}
+
+
+def _steam_app_id_from_desktop(fields: dict[str, str], exec_line: str) -> int | None:
+    for key in ("X-Steam-Library-AppID", "X-Steam-AppID", "X-GNOME-SteamAppID"):
+        raw = fields.get(key)
+        if not raw:
+            continue
+        try:
+            return int(str(raw).strip())
+        except ValueError:
+            continue
+    if "steam://rungameid/" in exec_line:
+        try:
+            return int(exec_line.split("steam://rungameid/", 1)[1].split()[0].strip("\"'"))
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def _numeric_steam_app_id(*values: str) -> int | None:
+    for raw in values:
+        match = _STEAM_APP_NUMERIC.match((raw or "").strip())
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def exec_launches_steam(exec_line: str) -> bool:
+    """True when Exec is Steam itself or a steam:// URI — not a custom launcher."""
+    text = exec_line or ""
+    if "steam://" in text.casefold():
+        return True
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        parts = text.split()
+    if not parts:
+        return False
+    cmd = Path(parts[0]).name.casefold()
+    if cmd in _STEAM_BINARIES:
+        return True
+    joined = " ".join(parts).casefold()
+    return "com.valvesoftware.steam" in joined
+
+
+def is_steam_generated_desktop(
+    fields: dict[str, str],
+    stem: str,
+    exec_line: str,
+    installed_appids: set[int] | None = None,
+) -> bool:
+    """Steam's own shortcuts — not a custom launcher with steam_app_* WM class."""
+    if exec_launches_steam(exec_line):
+        return True
+    appid = _numeric_steam_app_id(
+        stem,
+        fields.get("StartupWMClass", ""),
+        f"steam_app_{fields.get('X-Steam-Library-AppID', '')}",
+        f"steam_app_{fields.get('X-Steam-AppID', '')}",
+    )
+    if appid is None:
+        return False
+    if installed_appids is None:
+        return True
+    return appid in installed_appids
 
 
 def _parse_desktop(path: Path) -> dict[str, str] | None:
@@ -148,7 +217,7 @@ def _is_game(fields: dict[str, str], stem: str = "") -> str | None:
     name = fields.get("Name", "").lower()
     if _is_gfn_client(fields, stem) or name in _GFN_CLIENT_NAMES:
         return None
-    if any(k in name for k in ("xbox cloud", "minecraft")):
+    if any(k in name for k in ("xbox cloud", "minecraft", "warcraft", "battle.net", "battlenet")):
         return "webapp" if "omarchy-launch-webapp" in exec_line else "desktop"
     return None
 
@@ -184,6 +253,12 @@ def scan() -> tuple[list[Game], list[ScanError]]:
     games: list[Game] = []
     errors: list[ScanError] = []
     seen_ids: set[str] = set()
+    try:
+        from .steam import installed_app_ids as _steam_installed_app_ids
+
+        installed_appids = _steam_installed_app_ids()
+    except Exception:
+        installed_appids = set()
 
     for directory in application_dirs():
         try:
@@ -193,8 +268,8 @@ def scan() -> tuple[list[Game], list[ScanError]]:
             continue
         for path in entries:
             stem = path.stem
-            if stem.startswith("steam_app_"):
-                # Steam scanner owns steam_app_* shortcuts.
+            if _numeric_steam_app_id(stem) is not None:
+                # Steam-generated steam_app_<appid>.desktop — Steam scanner owns these.
                 continue
             if stem in _SKIP_IDS or stem in _GFN_CLIENT_IDS:
                 continue
@@ -215,13 +290,10 @@ def scan() -> tuple[list[Game], list[ScanError]]:
                 # Bare Steam launcher or steam://open — not a game
                 if "rungameid" not in exec_line.lower():
                     continue
-            # Fold steam://rungameid desktop wrappers into steam source via dedupe
-            steam_app_id = None
-            if "steam://rungameid/" in exec_line:
-                try:
-                    steam_app_id = int(exec_line.split("steam://rungameid/")[1].split()[0].strip("\"'"))
-                except (IndexError, ValueError):
-                    steam_app_id = None
+            if is_steam_generated_desktop(fields, stem, exec_line, installed_appids):
+                # Steam's own steam://rungameid shortcuts — not a Play on Desktop source.
+                continue
+            steam_app_id = _steam_app_id_from_desktop(fields, exec_line)
             title = fields["Name"]
             # Strip "GFN - " prefix for display but keep identity
             store = None
@@ -249,6 +321,9 @@ def scan() -> tuple[list[Game], list[ScanError]]:
             seen_ids.add(gid)
 
             icon = _icon_uri(fields.get("Icon", ""))
+            # .desktop Icon= is almost always a 32–128px theme/app icon, not cover art.
+            # GFN plugin launchers store box art in Icon=; keep those as covers.
+            icon_only = bool(icon) and source != "gfn"
             dedupe = [f"title:{normalize_title(title)}"]
             if steam_app_id is not None:
                 dedupe.insert(0, f"steam:{steam_app_id}")
@@ -269,7 +344,7 @@ def scan() -> tuple[list[Game], list[ScanError]]:
                         steam_app_id=steam_app_id,
                         handoff=source in ("gfn", "webapp") or steam_app_id is not None,
                     ),
-                    art=ArtSpec(cover=icon, icon=icon),
+                    art=ArtSpec(cover=icon, icon=icon, icon_only=icon_only),
                     description=fields.get("Comment"),
                     dedupe_keys=dedupe,
                 )

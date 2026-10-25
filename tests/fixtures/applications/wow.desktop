@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=World of Warcraft
+Exec=/home/mdance/.local/bin/launch-wow
+Icon=/home/mdance/.local/share/icons/wow.png
+Categories=Game;
+StartupWMClass=steam_app_battlenet
