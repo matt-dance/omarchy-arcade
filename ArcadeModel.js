@@ -400,6 +400,36 @@ function metaIsFresh(meta) {
   return (Date.now() - fetched) < days * 86400000
 }
 
+// Mirrors arcade/meta/resolve.py providers_at_fetch(): a cached record
+// fetched before a key was added should refresh now, not after the TTL.
+function providersAtFetch(meta) {
+  var names = ["igdb", "steamgriddb"]
+  var out = {}
+  var stored = meta && meta.providers
+  var used = (meta && meta.sourcesUsed) || []
+  var errors = (meta && meta.errors) || []
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i]
+    if (stored && typeof stored === "object") {
+      out[name] = !!stored[name]
+      continue
+    }
+    var seen = used.indexOf(name) !== -1
+    for (var j = 0; j < errors.length && !seen; j++) {
+      if (String(errors[j]).indexOf(name + ":") === 0)
+        seen = true
+    }
+    out[name] = seen
+  }
+  return out
+}
+
+function metaMissingProvider(meta, keyStatus) {
+  if (!meta || !keyStatus) return false
+  var seen = providersAtFetch(meta)
+  return (!!keyStatus.igdb && !seen.igdb) || (!!keyStatus.steamgriddb && !seen.steamgriddb)
+}
+
 function sourceLabels(game) {
   if (!game) return []
   var out = [sourceLabel(game.source)]

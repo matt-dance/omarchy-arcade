@@ -46,6 +46,15 @@ Item {
   property string pendingMetaId: ""
   property bool menuPinned: false
   property bool libraryBeneathMenu: false
+  property var keyStatus: ({})
+  property bool keysOpen: false
+  property int keysIndex: 0
+  property string keysMessage: ""
+  property bool keysTyping: false
+  property bool keysConfirmRemove: false
+  property bool pendingKeysSheet: false
+  property string pendingKeysStdin: ""
+  property var queuedKeysArgs: null
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -54,6 +63,18 @@ Item {
   )
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
+  readonly property string keysBin: root.pluginDir + "/bin/arcade-keys"
+  readonly property var keyRows: [
+    { id: "steamgriddb", label: "SteamGridDB API key", provider: "steamgriddb" },
+    { id: "twitch-id", label: "Twitch client ID (IGDB)", provider: "igdb" },
+    { id: "twitch-secret", label: "Twitch client secret (IGDB)", provider: "igdb" },
+    { id: "test", label: "Test keys" },
+    { id: "remove", label: "Remove all keys" },
+    { id: "close", label: "Done" }
+  ]
+  readonly property bool showKeysCard: root.keyStatus.file !== undefined
+                                       && !root.keyStatus.steamgriddb && !root.keyStatus.igdb
+                                       && !root.keyStatus.promptDismissed
   readonly property string metaFile: Model.metaFilePath(
     Quickshell.env("HOME") || "",
     Quickshell.env("XDG_CACHE_HOME") || "",
@@ -127,6 +148,11 @@ Item {
     root.ensureLibrary()
     if (root.service && typeof root.service.setUiMode === "function")
       root.service.setUiMode(true)
+    root.refreshKeyStatus()
+    if (root.pendingKeysSheet) {
+      root.pendingKeysSheet = false
+      root.openKeys()
+    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -306,7 +332,8 @@ Item {
   function ensureMeta(game) {
     if (!game || !game.id)
       return
-    if (root.selectedMeta && root.selectedMeta.id === game.id && Model.metaIsFresh(root.selectedMeta))
+    if (root.selectedMeta && root.selectedMeta.id === game.id && Model.metaIsFresh(root.selectedMeta)
+        && !Model.metaMissingProvider(root.selectedMeta, root.keyStatus))
       return
     if (metaProcess.running) {
       root.pendingMetaId = game.id
@@ -317,6 +344,178 @@ Item {
     console.warn("matt-dance.arcade: overlay starting arcade-meta " + game.id
                  + " file=" + root.metaFile)
     metaProcess.running = true
+  }
+
+  // One command at a time; while busy, keep only the latest request.
+  function runKeys(args, stdinText) {
+    if (keysProcess.running) {
+      root.queuedKeysArgs = args
+      root.pendingKeysStdin = stdinText || ""
+      return
+    }
+    keysProcess.command = ["/usr/bin/python3", root.keysBin].concat(args)
+    keysProcess.running = true
+    if (stdinText && stdinText.length)
+      keysProcess.write(stdinText)
+  }
+
+  function runQueuedKeys() {
+    if (!root.queuedKeysArgs)
+      return
+    var args = root.queuedKeysArgs
+    var stdinText = root.pendingKeysStdin
+    root.queuedKeysArgs = null
+    root.pendingKeysStdin = ""
+    root.runKeys(args, stdinText)
+  }
+
+  function refreshKeyStatus() {
+    root.runKeys(["status"])
+  }
+
+  // Only booleans and status words come back; key values never reach QML
+  // except while being typed into the masked field.
+  function applyKeysStdout(text) {
+    var data
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      return
+    }
+    if (!data || typeof data !== "object")
+      return
+    var hadSgdb = !!root.keyStatus.steamgriddb
+    var hadIgdb = !!root.keyStatus.igdb
+    root.keyStatus = data
+    if (data.error) {
+      root.keysMessage = data.error
+    } else if (data.saved) {
+      root.keysMessage = "Saved. Press Test keys to check it."
+    } else if (data.removed) {
+      root.keysMessage = data.removed.length ? "Removed." : "Nothing to remove."
+    } else if (data.test) {
+      var parts = []
+      if (data.test.steamgriddb) parts.push("SteamGridDB: " + data.test.steamgriddb)
+      if (data.test.igdb) parts.push("IGDB: " + data.test.igdb)
+      root.keysMessage = parts.join("   ·   ")
+    }
+    if ((data.steamgriddb && !hadSgdb) || (data.igdb && !hadIgdb))
+      root.refreshMetaForNewKeys()
+  }
+
+  function refreshMetaForNewKeys() {
+    console.warn("matt-dance.arcade: metadata keys changed — refreshing recent metadata")
+    if (!metaRefreshProcess.running) {
+      metaRefreshProcess.command = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir]
+      metaRefreshProcess.running = true
+    }
+    root.ensureMeta(root.focusedGame)
+  }
+
+  function openKeys() {
+    root.keysOpen = true
+    root.keysIndex = 0
+    root.keysTyping = false
+    root.keysConfirmRemove = false
+    root.keysMessage = ""
+    root.playOnOpen = false
+    root.runKeys(["dismiss-prompt"])
+  }
+
+  function closeKeys() {
+    root.keysOpen = false
+    root.cancelKeyTyping()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function keyRowStatus(row) {
+    var fields = root.keyStatus.fields || {}
+    var f = fields[row.id]
+    if (!f) return ""
+    if (f.fromEnv) return "set (environment)"
+    return f.set ? "set" : "not set"
+  }
+
+  function currentKeyRow() {
+    return root.keyRows[Math.max(0, Math.min(root.keyRows.length - 1, root.keysIndex))]
+  }
+
+  function moveKeys(delta) {
+    var n = root.keyRows.length
+    root.keysIndex = (root.keysIndex + delta + n) % n
+    root.keysConfirmRemove = false
+  }
+
+  function keysAccept() {
+    var row = root.currentKeyRow()
+    if (row.provider) {
+      root.keysMessage = "Reading clipboard…"
+      root.runKeys(["set", row.id, "--from-clipboard"])
+    } else if (row.id === "test") {
+      root.keysMessage = "Testing…"
+      root.runKeys(["test"])
+    } else if (row.id === "remove") {
+      if (!root.keysConfirmRemove) {
+        root.keysConfirmRemove = true
+        root.keysMessage = "Press A again to remove every key."
+      } else {
+        root.keysConfirmRemove = false
+        root.runKeys(["remove"])
+      }
+    } else {
+      root.closeKeys()
+    }
+  }
+
+  function keysRemoveCurrent() {
+    var row = root.currentKeyRow()
+    if (row.provider)
+      root.runKeys(["remove", row.id])
+  }
+
+  function startKeyTyping() {
+    var row = root.currentKeyRow()
+    if (!row.provider)
+      return
+    root.keysTyping = true
+    keyInput.text = ""
+    root.keysMessage = "Type or paste the key, then Enter. Esc cancels."
+    keyInput.forceActiveFocus()
+  }
+
+  function submitKeyTyping() {
+    var row = root.currentKeyRow()
+    var value = keyInput.text
+    root.cancelKeyTyping()
+    if (row.provider && value.length)
+      root.runKeys(["set", row.id], value + "\n")
+    keyCatcher.forceActiveFocus()
+  }
+
+  function cancelKeyTyping() {
+    root.keysTyping = false
+    if (keyInput)
+      keyInput.text = ""
+  }
+
+  function handleKeysIntent(name) {
+    if (name === "accept") root.keysAccept()
+    else if (name === "back") root.closeKeys()
+    else if (name === "options") root.startKeyTyping()
+    else if (name === "search") root.keysRemoveCurrent()
+  }
+
+  // System menu row "Metadata keys": show Arcade with the keys sheet up.
+  function showKeysFromMenu() {
+    if (root.opened) {
+      root.openKeys()
+      return
+    }
+    root.pendingKeysSheet = true
+    if (root.service && typeof root.service.toggleArcade === "function")
+      root.service.toggleArcade()
+    else
+      Quickshell.execDetached(["omarchy-shell", "shell", "toggle", Model.pluginId(root.manifest), "{}"])
   }
 
   function moveHome(dx, dy) {
@@ -459,6 +658,10 @@ Item {
     if (quickMenu && quickMenu.opened)
       return
     if (!root.opened) return
+    if (root.keysOpen) {
+      root.handleKeysIntent(name)
+      return
+    }
     if (root.playOnOpen) {
       if (name === "accept") root.launchPlayOnChoice()
       else if (name === "back") root.playOnOpen = false
@@ -466,8 +669,7 @@ Item {
     }
     if (name === "accept") {
       if (root.screen === "settings") {
-        root.screen = "home"
-        root.refreshList()
+        root.openKeys()
       } else if (root.homeActive && root.focusZone === "details" && root.detailButton === 1) {
         root.openOptions()
       } else {
@@ -519,6 +721,11 @@ Item {
     function onNav(dir, repeat) {
       if (quickMenu && quickMenu.opened) return
       if (!root.opened) return
+      if (root.keysOpen) {
+        if (dir === "up") root.moveKeys(-1)
+        else if (dir === "down") root.moveKeys(1)
+        return
+      }
       if (root.playOnOpen) {
         var n = root.playOnChoices.length
         if (!n) return
@@ -647,7 +854,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nOptional API keys: ~/.config/matt-dance.arcade/keys.json (chmod 600). Copy keys.example.json.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nMetadata keys (optional): SteamGridDB " + (root.keyStatus.steamgriddb ? "set" : "not set") + " · IGDB " + (root.keyStatus.igdb ? "set" : "not set") + ". Press A to set them up. Stored in ~/.config/matt-dance.arcade/keys.json (chmod 600), or run bin/arcade-keys setup in a terminal.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -657,7 +864,7 @@ Item {
             text: root.service ? ("Config errors:\n" + root.service.configErrors.join("\n")) : ""
           }
           Text {
-            text: "A / Enter  back to library"
+            text: "A / Enter  Metadata keys   ·   B / Esc  back"
             color: root.foreground
             opacity: 0.5
             font.family: root.fontFamily
@@ -671,6 +878,33 @@ Item {
           Layout.fillHeight: true
           visible: root.screen === "home"
           spacing: Style.spacing.md
+
+          Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: keysCardText.implicitHeight + Style.spacing.md * 2
+            visible: root.showKeysCard
+            radius: root.cornerRadius
+            color: Qt.rgba(1, 1, 1, 0.06)
+            border.color: Commons.Color.accent
+            border.width: 1
+            Text {
+              id: keysCardText
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.leftMargin: Style.spacing.lg
+              anchors.rightMargin: Style.spacing.lg
+              wrapMode: Text.WordWrap
+              text: "Optional: add free SteamGridDB and IGDB keys for box art and descriptions of non-Steam games. Press Start, then A."
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            MouseArea {
+              anchors.fill: parent
+              onClicked: root.openKeys()
+            }
+          }
 
           ListView {
             id: homeRow
@@ -947,7 +1181,7 @@ Item {
               Row {
                 Layout.fillWidth: true
                 spacing: Style.spacing.xs
-                visible: root.selectedMeta && root.selectedMeta.screenshots && root.selectedMeta.screenshots.length
+                visible: !!(root.selectedMeta && root.selectedMeta.screenshots && root.selectedMeta.screenshots.length)
 
                 Repeater {
                   model: (root.selectedMeta && root.selectedMeta.screenshots) ? root.selectedMeta.screenshots : []
@@ -1203,6 +1437,22 @@ Item {
         focus: true
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (root.keysOpen) {
+            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+              root.closeKeys(); event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.keysAccept(); event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
+              root.moveKeys(-1); event.accepted = true
+            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J || event.key === Qt.Key_Tab) {
+              root.moveKeys(1); event.accepted = true
+            } else if (event.key === Qt.Key_T || event.key === Qt.Key_X) {
+              root.startKeyTyping(); event.accepted = true
+            } else if (event.key === Qt.Key_Delete) {
+              root.keysRemoveCurrent(); event.accepted = true
+            }
+            return
+          }
           if (root.playOnOpen) {
             if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
               root.playOnOpen = false; event.accepted = true
@@ -1348,6 +1598,170 @@ Item {
           }
         }
       }
+
+      // Metadata keys sheet (Settings → A, first-run card, system menu)
+      Rectangle {
+        anchors.fill: parent
+        visible: root.keysOpen
+        color: Qt.rgba(0, 0, 0, 0.45)
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.closeKeys()
+        }
+
+        Rectangle {
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(80), Style.space(640))
+          height: keysColumn.implicitHeight + Style.spacing.panelPadding * 2
+          radius: root.cornerRadius
+          color: root.background
+          border.color: Commons.Color.menu.border
+          border.width: 1
+          MouseArea { anchors.fill: parent }
+
+          ColumnLayout {
+            id: keysColumn
+            anchors.fill: parent
+            anchors.margins: Style.spacing.panelPadding
+            spacing: Style.spacing.sm
+
+            Text {
+              text: "Metadata keys"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+            }
+            Text {
+              Layout.fillWidth: true
+              wrapMode: Text.WordWrap
+              text: "Optional and free. Arcade works without them. SteamGridDB adds box art; IGDB (a Twitch developer app) adds descriptions for non-Steam games. Copy a key, then press A on its row to paste it."
+              color: root.foreground
+              opacity: 0.75
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              Layout.fillWidth: true
+              wrapMode: Text.WrapAnywhere
+              text: "SteamGridDB: " + ((root.keyStatus.signup && root.keyStatus.signup.steamgriddb) || "steamgriddb.com/profile/preferences/api")
+                    + "\nIGDB: " + ((root.keyStatus.signup && root.keyStatus.signup.igdb) || "dev.twitch.tv/console/apps")
+              color: Commons.Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Repeater {
+              model: root.keyRows
+              Rectangle {
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true
+                Layout.preferredHeight: Style.space(44)
+                radius: root.cornerRadius
+                color: index === root.keysIndex ? root.selectedBackground : "transparent"
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.controlPaddingX
+                  text: modelData.label
+                  color: index === root.keysIndex ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.spacing.controlPaddingX
+                  text: root.keyRowStatus(modelData)
+                  color: index === root.keysIndex ? root.selectedText : root.foreground
+                  opacity: 0.7
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  onEntered: root.keysIndex = index
+                  onClicked: {
+                    root.keysIndex = index
+                    root.keysAccept()
+                  }
+                }
+              }
+            }
+
+            Rectangle {
+              Layout.fillWidth: true
+              Layout.preferredHeight: Style.space(40)
+              visible: root.keysTyping
+              color: "transparent"
+              border.color: Commons.Color.accent
+              border.width: 1
+              radius: root.cornerRadius
+              TextInput {
+                id: keyInput
+                anchors.fill: parent
+                anchors.margins: Style.spacing.controlPaddingX
+                verticalAlignment: TextInput.AlignVCenter
+                echoMode: TextInput.Password
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root.submitKeyTyping(); event.accepted = true
+                  } else if (event.key === Qt.Key_Escape) {
+                    root.cancelKeyTyping()
+                    root.keysMessage = ""
+                    keyCatcher.forceActiveFocus()
+                    event.accepted = true
+                  }
+                }
+              }
+            }
+
+            Text {
+              Layout.fillWidth: true
+              visible: root.keysMessage.length > 0
+              wrapMode: Text.WordWrap
+              text: root.keysMessage
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              Layout.fillWidth: true
+              wrapMode: Text.WordWrap
+              text: "A  paste from clipboard   ·   X  type it   ·   Y  remove this key   ·   B  done"
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Process {
+    id: keysProcess
+    stdinEnabled: true
+    stdout: StdioCollector {
+      onStreamFinished: root.applyKeysStdout(text)
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0 && exitCode !== 1)
+        console.warn("matt-dance.arcade: arcade-keys exited " + exitCode)
+      Qt.callLater(root.runQueuedKeys)
+    }
+  }
+
+  Process {
+    id: metaRefreshProcess
+    stdout: StdioCollector {
+      onStreamFinished: root.applyMetaStdout(text)
     }
   }
 
@@ -1382,6 +1796,7 @@ Item {
     pluginRegistry: root.pluginRegistry
     service: root.service
     onDismissed: root.onQuickMenuDismissed()
+    onKeysRequested: Qt.callLater(root.showKeysFromMenu)
   }
 
   FileView {

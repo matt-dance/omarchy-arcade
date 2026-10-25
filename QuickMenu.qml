@@ -32,6 +32,7 @@ Item {
   property bool busy: false
 
   signal dismissed()
+  signal keysRequested()
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string sysBin: root.pluginDir + "/bin/arcade-sys"
@@ -45,6 +46,8 @@ Item {
     { id: "close", kind: "action", label: "Close game", section: "Game" },
     { id: "force", kind: "action", label: "Force quit", section: "Game" },
     { id: "arcade", kind: "action", label: "Back to Arcade", section: "Game" },
+    { id: "sec-arcade", kind: "header", label: "Arcade", section: "Arcade" },
+    { id: "arcade_keys", kind: "action", label: "Metadata keys", section: "Arcade" },
     { id: "sec-power", kind: "header", label: "Power", section: "Power" },
     { id: "lock", kind: "action", label: "Lock", section: "Power", confirm: true },
     { id: "suspend", kind: "action", label: "Suspend", section: "Power", confirm: true },
@@ -225,6 +228,11 @@ Item {
     }
     if (item.id === "mangohud") {
       root.tapMango()
+      return
+    }
+    if (item.id === "arcade_keys") {
+      root.dismiss()
+      root.keysRequested()
       return
     }
     var extra = item.arg || {}
