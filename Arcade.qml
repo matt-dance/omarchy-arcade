@@ -52,6 +52,7 @@ Item {
   property string optionsTitle: ""
   property string lastListLog: ""
   property bool pendingMetaForce: false
+  property point lastPointer: Qt.point(-1, -1)
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -134,6 +135,7 @@ Item {
     root.screen = "home"
     root.filterText = ""
     root.selectedIndex = 0
+    root.lastPointer = Qt.point(-1, -1)
     root.focusZone = "shelf"
     root.detailButton = 0
     if (stateView && typeof stateView.reload === "function")
@@ -270,6 +272,15 @@ Item {
     root.focusZone = "shelf"
     root.detailButton = 0
     root.refreshList()
+  }
+
+  // Hover only counts when the pointer really moved. A sheet or list that
+  // appears under a resting pointer must not steal the controller's focus.
+  function pointerMoved(scenePos) {
+    var lastX = root.lastPointer.x
+    var lastY = root.lastPointer.y
+    root.lastPointer = Qt.point(scenePos.x, scenePos.y)
+    return lastX >= 0 && (scenePos.x !== lastX || scenePos.y !== lastY)
   }
 
   function loadLibraryFromDisk() {
@@ -960,7 +971,9 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  onEntered: {
+                  onPositionChanged: function(mouse) {
+                    if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                      return
                     root.selectedIndex = index
                     root.focusZone = "shelf"
                   }
@@ -1169,7 +1182,9 @@ Item {
                   MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onEntered: {
+                    onPositionChanged: function(mouse) {
+                      if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                        return
                       root.focusZone = "details"
                       root.detailButton = 0
                     }
@@ -1201,7 +1216,9 @@ Item {
                   MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onEntered: {
+                    onPositionChanged: function(mouse) {
+                      if (!root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                        return
                       root.focusZone = "details"
                       root.detailButton = 1
                     }
@@ -1390,7 +1407,10 @@ Item {
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
-                onEntered: root.selectedIndex = index
+                onPositionChanged: function(mouse) {
+                  if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                    root.selectedIndex = index
+                }
                 onClicked: {
                   root.selectedIndex = index
                   root.activateSelected()
@@ -1582,7 +1602,10 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  onEntered: root.playOnIndex = index
+                  onPositionChanged: function(mouse) {
+                    if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                      root.playOnIndex = index
+                  }
                   onClicked: {
                     root.playOnIndex = index
                     root.launchPlayOnChoice()
