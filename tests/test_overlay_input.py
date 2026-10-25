@@ -34,6 +34,19 @@ class TestOverlayInput(unittest.TestCase):
         self.assertIn("Qt.Key_Escape", field)
         self.assertIn("root.handleKey(event)", field)
 
+    def test_search_field_passes_left_right_at_text_edges(self):
+        field = self.qml[self.qml.index("id: searchInput"):]
+        field = field[: field.index("// Settings pane")]
+        self.assertIn("Qt.Key_Left", field)
+        self.assertIn("Qt.Key_Right", field)
+        self.assertIn("searchInput.cursorPosition === searchInput.text.length", field)
+
+    def test_late_arcade_toml_is_picked_up(self):
+        service = (ROOT / "Service.qml").read_text(encoding="utf-8")
+        self.assertIn("id: userConfigProbe", service)
+        self.assertIn('"/usr/bin/test", "-e", root.userConfigFile', service)
+        self.assertIn("userConfigView.reload()", service)
+
     def test_s_key_is_not_swallowed(self):
         self.assertIsNone(re.search(r"Qt\.Key_S\b", self.qml))
 
