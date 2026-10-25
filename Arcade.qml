@@ -46,6 +46,12 @@ Item {
   property string pendingMetaId: ""
   property bool menuPinned: false
   property bool libraryBeneathMenu: false
+  property var libraryState: Model.parseStateText("")
+  property string libraryTab: "all"
+  property string sortMode: "recent"
+  property string optionsTitle: ""
+  property string lastListLog: ""
+  property bool pendingMetaForce: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -54,6 +60,12 @@ Item {
   )
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
+  readonly property string stateBin: root.pluginDir + "/bin/arcade-state"
+  readonly property string stateFile: Model.stateFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_STATE_HOME") || ""
+  )
+  property var libraryTabs: Model.libraryTabs([])
   readonly property string metaFile: Model.metaFilePath(
     Quickshell.env("HOME") || "",
     Quickshell.env("XDG_CACHE_HOME") || "",
@@ -79,8 +91,10 @@ Item {
     { key: "A", label: "Play" },
     { key: "B", label: "Back" },
     { key: "Y", label: "Search" },
-    { key: "LB/RB", label: "Home/Library" },
+    { key: "LB/RB", label: "Tabs" },
+    { key: "Select", label: "Sort" },
     { key: "X", label: "Options" },
+    { key: "R3", label: "Favorite" },
     { key: "Start", label: "Settings" }
   ]
   readonly property var homeShelfHints: [
@@ -122,6 +136,8 @@ Item {
     root.selectedIndex = 0
     root.focusZone = "shelf"
     root.detailButton = 0
+    if (stateView && typeof stateView.reload === "function")
+      stateView.reload()
     root.loadLibraryFromDisk()
     root.refreshList()
     root.ensureLibrary()
@@ -151,7 +167,109 @@ Item {
   }
 
   function libraryGames() {
-    return Model.resolvedGames(root.service, root.localGames)
+    return Model.applyState(Model.resolvedGames(root.service, root.localGames), root.libraryState)
+  }
+
+  function loadStateFromDisk() {
+    var text = ""
+    try {
+      text = stateView.text()
+    } catch (e) {
+      text = ""
+    }
+    root.libraryState = Model.parseStateText(text)
+    root.sortMode = root.libraryState.sort
+    root.refreshKeepingFocus()
+  }
+
+  function runStateCommand(args) {
+    Quickshell.execDetached(["/usr/bin/python3", root.stateBin].concat(args))
+  }
+
+  function focusedGameOrNull() {
+    if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
+      return null
+    return root.visibleGames[root.selectedIndex]
+  }
+
+  // Update the in-memory state immediately; state.json catches up via FileView.
+  function toggleStateMember(listName, game) {
+    if (!game || !game.id)
+      return
+    var next = Model.parseStateText(JSON.stringify({
+      favorites: Object.keys(root.libraryState.favorites),
+      hidden: Object.keys(root.libraryState.hidden),
+      games: root.libraryState.games,
+      sort: root.libraryState.sort
+    }))
+    var on = !game[listName === "favorites" ? "favorite" : "hidden"]
+    var ids = [String(game.id)]
+    var extra = game.alsoOn || []
+    for (var i = 0; i < extra.length; i++) {
+      if (extra[i] && typeof extra[i] === "object" && extra[i].id)
+        ids.push(String(extra[i].id))
+    }
+    for (var j = 0; j < ids.length; j++) {
+      if (on && j === 0)
+        next[listName][ids[j]] = true
+      else if (!on)
+        delete next[listName][ids[j]]
+    }
+    root.libraryState = next
+    root.refreshKeepingFocus()
+    var cmd = listName === "favorites" ? "favorite" : "hide"
+    root.runStateCommand([cmd, String(game.id), on ? "--on" : "--off"])
+    for (var k = 1; k < ids.length && !on; k++)
+      root.runStateCommand([cmd, ids[k], "--off"])
+  }
+
+  function toggleFavorite(game) {
+    root.toggleStateMember("favorites", game || root.focusedGameOrNull())
+  }
+
+  function toggleHidden(game) {
+    root.toggleStateMember("hidden", game || root.focusedGameOrNull())
+  }
+
+  function cycleSort() {
+    root.sortMode = Model.nextSort(root.sortMode)
+    root.libraryState.sort = root.sortMode
+    root.selectedIndex = 0
+    root.refreshList()
+    root.runStateCommand(["sort", root.sortMode])
+  }
+
+  function libraryTabIndex() {
+    for (var i = 0; i < root.libraryTabs.length; i++) {
+      if (root.libraryTabs[i].id === root.libraryTab)
+        return i
+    }
+    return -1
+  }
+
+  function libraryTabLabel() {
+    var i = root.libraryTabIndex()
+    return i >= 0 ? root.libraryTabs[i].label : "All games"
+  }
+
+  // LB/RB walk Home → All games → Favorites → each store → Hidden → Home.
+  function stepTab(delta) {
+    var tabs = root.libraryTabs
+    var pos = root.screen === "library" ? root.libraryTabIndex() : -1
+    var next = pos + delta
+    if (root.screen !== "library" && delta < 0)
+      next = tabs.length - 1
+    if (next < 0 || next >= tabs.length) {
+      root.screen = "home"
+    } else {
+      root.screen = "library"
+      root.libraryTab = tabs[next].id
+    }
+    root.filterText = ""
+    root.selectedIndex = 0
+    root.focusZone = "shelf"
+    root.detailButton = 0
+    root.refreshList()
   }
 
   function loadLibraryFromDisk() {
@@ -203,10 +321,29 @@ Item {
     return true
   }
 
+  function refreshKeepingFocus() {
+    var current = root.focusedGameOrNull()
+    root.refreshList()
+    if (!current)
+      return
+    for (var i = 0; i < root.visibleGames.length; i++) {
+      if (root.visibleGames[i].id === current.id) {
+        if (i !== root.selectedIndex)
+          root.selectedIndex = i
+        return
+      }
+    }
+  }
+
   function refreshList() {
     var games = root.libraryGames()
+    root.libraryTabs = Model.libraryTabs(games)
+    if (root.screen === "library" && root.libraryTabIndex() < 0)
+      root.libraryTab = "all"
     if (root.homeActive)
       root.visibleGames = Model.homeShelf(games)
+    else if (root.screen === "library" && !root.filterText.length)
+      root.visibleGames = Model.sortGames(Model.tabGames(games, root.libraryTab), root.sortMode)
     else
       root.visibleGames = Model.filterGames(games, root.filterText)
     if (root.selectedIndex >= root.visibleGames.length)
@@ -214,10 +351,14 @@ Item {
     root.updateFocused()
     var cacheN = root.localGames ? root.localGames.length : 0
     var serviceN = (root.service && root.service.games) ? root.service.games.length : 0
-    console.warn("matt-dance.arcade: shelf=" + root.visibleGames.length
-                 + " cache=" + cacheN
-                 + " service=" + serviceN
-                 + " resolved=" + games.length)
+    var listLog = "shelf=" + root.visibleGames.length
+                  + " cache=" + cacheN
+                  + " service=" + serviceN
+                  + " resolved=" + games.length
+    if (listLog !== root.lastListLog) {
+      root.lastListLog = listLog
+      console.warn("matt-dance.arcade: " + listLog)
+    }
     var n = games.length
     var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
     if (scanning && n === 0)
@@ -228,6 +369,8 @@ Item {
       root.statusText = n + " games (cached) · service not loaded — omarchy-restart-shell"
     else if (root.screen === "home")
       root.statusText = "Home · " + n + " games"
+    else if (root.screen === "library" && !root.filterText.length)
+      root.statusText = root.libraryTabLabel() + " · " + root.visibleGames.length + " games · " + Model.sortLabel(root.sortMode)
     else
       root.statusText = root.visibleGames.length + " of " + n + " games"
   }
@@ -308,14 +451,24 @@ Item {
       return
     if (root.selectedMeta && root.selectedMeta.id === game.id && Model.metaIsFresh(root.selectedMeta))
       return
+    root.startMeta(game.id, false)
+  }
+
+  function startMeta(gameId, force) {
     if (metaProcess.running) {
-      root.pendingMetaId = game.id
+      root.pendingMetaId = gameId
+      root.pendingMetaForce = force
       return
     }
     root.pendingMetaId = ""
-    metaProcess.command = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir, game.id]
-    console.warn("matt-dance.arcade: overlay starting arcade-meta " + game.id
-                 + " file=" + root.metaFile)
+    root.pendingMetaForce = false
+    var cmd = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir]
+    if (force)
+      cmd.push("--force")
+    cmd.push(gameId)
+    metaProcess.command = cmd
+    console.warn("matt-dance.arcade: overlay starting arcade-meta " + gameId
+                 + (force ? " --force" : "") + " file=" + root.metaFile)
     metaProcess.running = true
   }
 
@@ -363,13 +516,11 @@ Item {
   }
 
   function openOptions() {
-    if (root.selectedIndex < 0 || root.selectedIndex >= root.visibleGames.length)
+    var game = root.focusedGameOrNull()
+    if (!game)
       return
-    var game = root.visibleGames[root.selectedIndex]
-    var choices = Model.playOnChoices(game)
-    if (!choices.length)
-      return
-    root.playOnChoices = choices
+    root.optionsTitle = game.title || ""
+    root.playOnChoices = Model.optionItems(game)
     root.playOnIndex = 0
     root.playOnOpen = true
   }
@@ -377,9 +528,17 @@ Item {
   function launchPlayOnChoice() {
     if (!root.playOnOpen || root.playOnIndex < 0 || root.playOnIndex >= root.playOnChoices.length)
       return
-    var choice = root.playOnChoices[root.playOnIndex]
+    var item = root.playOnChoices[root.playOnIndex]
+    var game = root.focusedGameOrNull()
     root.playOnOpen = false
-    root.launchResolved(choice)
+    if (item.action === "play")
+      root.launchResolved(item.choice)
+    else if (item.action === "favorite")
+      root.toggleFavorite(game)
+    else if (item.action === "hide")
+      root.toggleHidden(game)
+    else if (item.action === "refresh" && game)
+      root.startMeta(game.id, true)
   }
 
   // Host `shell call matt-dance.arcade <method>` hits this overlay item, not Service.qml.
@@ -493,17 +652,15 @@ Item {
       root.focusZone = "shelf"
       root.refreshList()
     } else if (name === "tab_next") {
-      root.screen = root.screen === "home" ? "library" : "home"
-      root.selectedIndex = 0
-      root.focusZone = "shelf"
-      root.detailButton = 0
-      root.refreshList()
+      root.stepTab(1)
     } else if (name === "tab_prev") {
-      root.screen = root.screen === "library" ? "home" : "library"
-      root.selectedIndex = 0
-      root.focusZone = "shelf"
-      root.detailButton = 0
-      root.refreshList()
+      root.stepTab(-1)
+    } else if (name === "sort") {
+      if (root.screen === "library" && !root.filterText.length)
+        root.cycleSort()
+    } else if (name === "favorite") {
+      if (root.screen !== "settings")
+        root.toggleFavorite()
     } else if (name === "page_down") root.moveSelection(root.homeActive ? 4 : 0, root.homeActive ? 0 : 2)
     else if (name === "page_up") root.moveSelection(root.homeActive ? -4 : 0, root.homeActive ? 0 : -2)
   }
@@ -647,7 +804,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nOptional API keys: ~/.config/matt-dance.arcade/keys.json (chmod 600). Copy keys.example.json.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nOptional API keys: ~/.config/matt-dance.arcade/keys.json (chmod 600). Copy keys.example.json.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\nFavorites, hidden games, and play history: " + root.stateFile + "\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -776,6 +933,25 @@ Item {
                           ? "Play on…"
                           : Model.sourceLabel(modelData.source)
                     color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Rectangle {
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  anchors.margins: Style.space(8)
+                  visible: !!modelData.favorite
+                  width: height
+                  height: favStar.implicitHeight + Style.space(4)
+                  radius: height / 2
+                  color: Qt.rgba(0, 0, 0, 0.65)
+                  Text {
+                    id: favStar
+                    anchors.centerIn: parent
+                    text: "★"
+                    color: Commons.Color.accent
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
@@ -947,7 +1123,7 @@ Item {
               Row {
                 Layout.fillWidth: true
                 spacing: Style.spacing.xs
-                visible: root.selectedMeta && root.selectedMeta.screenshots && root.selectedMeta.screenshots.length
+                visible: !!(root.selectedMeta && root.selectedMeta.screenshots && root.selectedMeta.screenshots.length)
 
                 Repeater {
                   model: (root.selectedMeta && root.selectedMeta.screenshots) ? root.selectedMeta.screenshots : []
@@ -1034,6 +1210,57 @@ Item {
                 }
               }
             }
+            }
+          }
+        }
+
+        // Library tabs (LB/RB) and sort order (Select)
+        RowLayout {
+          Layout.fillWidth: true
+          visible: root.screen === "library" && root.filterText.length === 0
+          spacing: Style.spacing.sm
+
+          Repeater {
+            model: root.libraryTabs
+            Rectangle {
+              required property var modelData
+              readonly property bool current: modelData.id === root.libraryTab
+              Layout.preferredWidth: tabText.implicitWidth + Style.space(20)
+              Layout.preferredHeight: tabText.implicitHeight + Style.space(10)
+              radius: height / 2
+              color: current ? root.selectedBackground : Qt.rgba(1, 1, 1, 0.06)
+              border.width: current ? 2 : 1
+              border.color: current ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.14)
+              Text {
+                id: tabText
+                anchors.centerIn: parent
+                text: modelData.label
+                color: parent.current ? root.selectedText : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                  root.libraryTab = parent.modelData.id
+                  root.selectedIndex = 0
+                  root.refreshList()
+                }
+              }
+            }
+          }
+
+          Item { Layout.fillWidth: true }
+
+          Text {
+            text: "Sort: " + Model.sortLabel(root.sortMode)
+            color: root.foreground
+            opacity: 0.7
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            MouseArea {
+              anchors.fill: parent
+              onClicked: root.cycleSort()
             }
           }
         }
@@ -1136,6 +1363,25 @@ Item {
                         ? "Play on…"
                         : Model.sourceLabel(modelData.source)
                   color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Style.space(6)
+                visible: !!modelData.favorite
+                width: height
+                height: libFavStar.implicitHeight + Style.space(4)
+                radius: height / 2
+                color: Qt.rgba(0, 0, 0, 0.65)
+                Text {
+                  id: libFavStar
+                  anchors.centerIn: parent
+                  text: "★"
+                  color: Commons.Color.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                 }
@@ -1263,6 +1509,10 @@ Item {
             if (event.key === Qt.Key_M) {
               root.handleIntent("menu"); event.accepted = true
             }
+          } else if (event.key === Qt.Key_F2) {
+            root.handleIntent("sort"); event.accepted = true
+          } else if (event.key === Qt.Key_F3) {
+            root.handleIntent("favorite"); event.accepted = true
           } else if (event.key === Qt.Key_F5) {
             if (root.service) root.service.rescan()
             event.accepted = true
@@ -1277,7 +1527,7 @@ Item {
         }
       }
 
-      // Play on… picker (same title from two stores)
+      // Per-game Options sheet: Play on… choices, favorite, hide, refresh metadata
       Rectangle {
         anchors.fill: parent
         visible: root.playOnOpen
@@ -1303,11 +1553,13 @@ Item {
             spacing: Style.spacing.sm
 
             Text {
-              text: "Play on…"
+              Layout.fillWidth: true
+              text: root.optionsTitle || "Options"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.heading
               font.bold: true
+              elide: Text.ElideRight
             }
             Repeater {
               model: root.playOnChoices
@@ -1339,7 +1591,7 @@ Item {
               }
             }
             Text {
-              text: "A / Enter  play   ·   B / Esc  back"
+              text: "A / Enter  select   ·   B / Esc  back"
               color: root.foreground
               opacity: 0.5
               font.family: root.fontFamily
@@ -1393,6 +1645,14 @@ Item {
   }
 
   FileView {
+    id: stateView
+    path: root.stateFile
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: root.loadStateFromDisk()
+  }
+
+  FileView {
     id: metaView
     path: root.metaFile
     watchChanges: true
@@ -1430,9 +1690,13 @@ Item {
       if (!root.pendingMetaId)
         return
       var next = root.pendingMetaId
+      var force = root.pendingMetaForce
       root.pendingMetaId = ""
+      root.pendingMetaForce = false
       Qt.callLater(function() {
-        if (root.focusedGame && root.focusedGame.id === next)
+        if (force)
+          root.startMeta(next, true)
+        else if (root.focusedGame && root.focusedGame.id === next)
           root.ensureMeta(root.focusedGame)
       })
     }

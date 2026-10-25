@@ -54,15 +54,29 @@ def source_label(source: str | None) -> str:
     return SOURCE_LABELS.get(str(source).casefold(), str(source))
 
 
+RECENT_LIMIT = 10
+
+
+def _title_key(g: dict[str, Any]) -> str:
+    return str(g.get("sortTitle") or g.get("title") or "").casefold()
+
+
 def home_shelf(games: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Recently played first (newest), then the rest of the library by title."""
-    items = list(games or [])
+    """Recently played (newest, capped), then favorites by title, then the rest.
+
+    Hidden games are left out. Mirrors ArcadeModel.js homeShelf().
+    """
+    items = [g for g in (games or []) if g and not g.get("hidden")]
     played = [g for g in items if g.get("lastPlayed")]
-    rest = [g for g in items if not g.get("lastPlayed")]
-    played.sort(key=lambda g: str(g.get("sortTitle") or g.get("title") or "").casefold())
+    unplayed = [g for g in items if not g.get("lastPlayed")]
+    played.sort(key=_title_key)
     played.sort(key=lambda g: str(g.get("lastPlayed") or ""), reverse=True)
-    rest.sort(key=lambda g: str(g.get("sortTitle") or g.get("title") or "").casefold())
-    return played + rest
+    unplayed.sort(key=_title_key)
+    recent = played[:RECENT_LIMIT]
+    remaining = played[RECENT_LIMIT:] + unplayed
+    favorites = sorted((g for g in remaining if g.get("favorite")), key=_title_key)
+    rest = [g for g in remaining if not g.get("favorite")]
+    return recent + favorites + rest
 
 
 def play_on_choices(game: dict[str, Any] | None) -> list[dict[str, Any]]:
