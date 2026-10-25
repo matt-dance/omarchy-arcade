@@ -15,8 +15,11 @@ from arcade.home import (
     hero_url,
     home_shelf,
     is_icon_only,
+    is_small_art,
+    lookup_meta,
     play_meta,
     play_on_choices,
+    remember_meta,
     source_badges,
     source_label,
 )
@@ -153,6 +156,23 @@ class TestPlayMeta(unittest.TestCase):
         self.assertTrue(is_icon_only({"art": {"iconOnly": True, "cover": "file:///i.png"}}))
         self.assertFalse(is_icon_only({"art": {"cover": "file:///c.jpg"}}))
         self.assertFalse(is_icon_only({}))
+
+    def test_unfocused_card_prefers_meta_cover(self):
+        game = {
+            "id": "desktop:wow",
+            "title": "World of Warcraft",
+            "art": {"iconOnly": True, "cover": "file:///ba.png", "icon": "file:///ba.png"},
+        }
+        meta = {"id": "desktop:wow", "art": {"cover": "file:///meta/desktop_wow/cover.jpg"}}
+        by_id = remember_meta({}, meta)
+        found = lookup_meta(game, by_id)
+        self.assertEqual(cover_url(game, found), "file:///meta/desktop_wow/cover.jpg")
+        self.assertFalse(is_small_art(game, 0, 0, found))
+        self.assertTrue(is_small_art(game, 0, 0, None))
+        self.assertEqual(cover_url(game, None), "file:///ba.png")
+        other = {"id": "desktop:battle.net", "art": {"iconOnly": True, "cover": "file:///ba.png"}}
+        self.assertIsNone(lookup_meta(other, by_id))
+        self.assertTrue(is_small_art(other, 0, 0, lookup_meta(other, by_id)))
 
 
 if __name__ == "__main__":

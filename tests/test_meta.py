@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from arcade.meta.cache import cache_stem, is_fresh, load_cached, meta_json_path, write_cached
+from arcade.meta.cache import (
+    cache_stem,
+    cached_art_map,
+    is_fresh,
+    load_cached,
+    meta_json_path,
+    write_cached,
+)
 from arcade.meta.http import HttpError
 from arcade.meta.igdb import parse_games
 from arcade.meta.keys import Keys
@@ -166,6 +173,31 @@ class TestCacheFreshness(unittest.TestCase):
             self.assertIsNone(load_cached("missing", cache))
             self.assertEqual(cache_stem("steam:1203620"), "steam_1203620")
             self.assertTrue(str(meta_json_path("steam:1203620", cache)).endswith("steam_1203620.json"))
+
+    def test_cached_art_map_lists_covers_for_every_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            write_cached(
+                "desktop:wow",
+                {"id": "desktop:wow", "art": {"cover": "file:///meta/wow/cover.jpg"}},
+                cache,
+            )
+            write_cached(
+                "desktop:battle.net",
+                {"id": "desktop:battle.net", "description": "launcher only"},
+                cache,
+            )
+            mapping = cached_art_map(
+                [
+                    {"id": "desktop:wow", "art": {"iconOnly": True, "cover": "file:///ba.png"}},
+                    {"id": "desktop:battle.net"},
+                    {"id": "steam:1203620"},
+                ],
+                cache,
+            )
+            self.assertEqual(mapping["desktop:wow"]["art"]["cover"], "file:///meta/wow/cover.jpg")
+            self.assertNotIn("desktop:battle.net", mapping)
+            self.assertNotIn("steam:1203620", mapping)
 
 
 class TestResolve(unittest.TestCase):
