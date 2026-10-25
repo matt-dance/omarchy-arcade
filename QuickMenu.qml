@@ -47,7 +47,7 @@ Item {
     { id: "force", kind: "action", label: "Force quit", section: "Game" },
     { id: "arcade", kind: "action", label: "Back to Arcade", section: "Game" },
     { id: "sec-arcade", kind: "header", label: "Arcade", section: "Arcade" },
-    { id: "arcade_keys", kind: "action", label: "Metadata keys", section: "Arcade" },
+    { id: "arcade_keys", kind: "action", label: "Metadata keys", section: "Arcade", hint: "SteamGridDB · IGDB" },
     { id: "sec-power", kind: "header", label: "Power", section: "Power" },
     { id: "lock", kind: "action", label: "Lock", section: "Power", confirm: true },
     { id: "suspend", kind: "action", label: "Suspend", section: "Power", confirm: true },
@@ -592,6 +592,19 @@ Item {
                       font.family: Style.font.menuFamily
                       font.pixelSize: Style.font.title
                       Layout.fillWidth: true
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      visible: modelData.kind === "action" && !!modelData.hint
+                      text: modelData.hint || ""
+                      color: {
+                        var entry = root.currentEntry()
+                        return (entry && entry.index === index) ? root.selectedText : root.foreground
+                      }
+                      opacity: 0.55
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption
+                      Layout.maximumWidth: menuColumn.width / 2
                       elide: Text.ElideRight
                     }
                     Text {
