@@ -21,6 +21,8 @@ from .config import ArcadeConfig, Binding, load_config
 from .linux_input import (
     ABS_HAT0X,
     ABS_HAT0Y,
+    ABS_X,
+    ABS_Y,
     ABS_Z,
     ABS_RZ,
     BUTTON_MAP,
@@ -32,9 +34,11 @@ from .linux_input import (
     VirtualKeyboard,
     inspect_device,
     list_gamepads,
+    read_abs_range,
     read_events,
 )
 from .model import Game
+from .nav import DPAD_DIRS, NavRepeater, normalize_axis, stick_direction
 from .paths import default_config_path, library_path
 from .session import SessionTracker
 
@@ -57,11 +61,19 @@ class ArcadeDaemon:
         self._hat: dict[str, dict[str, int]] = {}  # path -> {x,y}
         self._running = True
         self._games_by_id: dict[str, Game] = {}
+        self.nav = NavRepeater()
+        self.nav.configure(self.cfg.input)
+        self._ranges: dict[int, dict[int, tuple[int, int]]] = {}  # fd -> axis -> (min, max)
+        self._stick: dict[str, dict[str, float]] = {}  # path -> {x, y} normalized
+        self._pads_payload: list[dict] | None = None
+        self._known_pads: set[str] | None = None  # None until the first device scan
 
     def reload(self) -> None:
         self.cfg = load_config(self.plugin_dir)
         self.engine.set_bindings(self.cfg.bindings, self.cfg.input)
         self.engine.reset()
+        self.nav.configure(self.cfg.input)
+        self.nav.reset()
         emit({"t": "config", "ok": not self.cfg.errors, "errors": self.cfg.errors})
 
     def refresh_devices(self) -> None:
@@ -82,7 +94,10 @@ class ArcadeDaemon:
                 except OSError:
                     pass
                 del self._fds[fd]
+                self._ranges.pop(fd, None)
                 self._hat.pop(info.path, None)
+                self._stick.pop(info.path, None)
+                self.nav.release(f"stick:{info.path}", time.monotonic())
         # Open new
         open_paths = {i.path for i in self._fds.values()}
         for path, info in wanted.items():
@@ -94,10 +109,24 @@ class ArcadeDaemon:
                 continue
             self._fds[fd] = info
             self._hat[path] = {"x": 0, "y": 0}
-        emit({"t": "pads", "pads": [i.to_dict() for i in self._fds.values()]})
+            ranges: dict[int, tuple[int, int]] = {}
+            for axis in (ABS_X, ABS_Y, ABS_Z, ABS_RZ):
+                rng = read_abs_range(fd, axis)
+                if rng:
+                    ranges[axis] = rng
+            self._ranges[fd] = ranges
 
-        # Auto-open option
-        if self.cfg.input.get("auto_open_on_connect") and self._fds:
+        payload = [i.to_dict() for i in self._fds.values()]
+        if payload != self._pads_payload:
+            self._pads_payload = payload
+            emit({"t": "pads", "pads": payload})
+
+        # Auto-open only when a pad is newly connected, not on every scan
+        # and not for pads that were already there when arcaded started.
+        current = {i.path for i in self._fds.values()}
+        added = current - self._known_pads if self._known_pads is not None else set()
+        self._known_pads = current
+        if self.cfg.input.get("auto_open_on_connect") and added:
             emit({"t": "action", "name": "arcade.toggle", "reason": "connect"})
 
     def _handle_activation(self, binding: Binding, reason: str) -> None:
@@ -121,19 +150,22 @@ class ArcadeDaemon:
         if binding.action:
             emit({"t": "action", "name": binding.action, "reason": reason})
 
+    def _modifier_held(self) -> bool:
+        return self.cfg.input.get("modifier", "GUIDE") in self.engine.held
+
+    def _emit_nav(self, direction: str, repeat: bool) -> None:
+        if self.ui_mode and not self._modifier_held():
+            emit({"t": "nav", "dir": direction, "repeat": repeat})
+
     def _nav_or_button(self, button: str, pressed: bool, now: float) -> None:
         if not pressed:
+            if button in DPAD_DIRS:
+                self.nav.release_direction("dpad", DPAD_DIRS[button], now)
             for act in self.engine.on_release(button, now):
                 self._handle_activation(act.binding, act.reason)
             return
 
         # In UI mode, bare navigation buttons become intents (unless part of a chord with modifier)
-        nav_map = {
-            "DPAD_UP": "up",
-            "DPAD_DOWN": "down",
-            "DPAD_LEFT": "left",
-            "DPAD_RIGHT": "right",
-        }
         intent_map = {
             "A": "accept",
             "B": "back",
@@ -160,8 +192,10 @@ class ArcadeDaemon:
             return
 
         if self.ui_mode:
-            if button in nav_map:
-                emit({"t": "nav", "dir": nav_map[button], "repeat": False})
+            if button in DPAD_DIRS:
+                direction = self.nav.press("dpad", DPAD_DIRS[button], now)
+                if direction:
+                    self._emit_nav(direction, False)
             elif button in intent_map:
                 emit({"t": "intent", "name": intent_map[button]})
 
@@ -171,6 +205,7 @@ class ArcadeDaemon:
         for etype, code, value in events:
             if etype == EV_SYN and code == SYN_DROPPED:
                 self.engine.reset()
+                self.nav.reset()
                 continue
             if etype == EV_KEY and code in BUTTON_MAP:
                 button = BUTTON_MAP[code]
@@ -195,15 +230,38 @@ class ArcadeDaemon:
                         btn = _hat_button(axis, value)
                         if btn:
                             self._nav_or_button(btn, True, now)
+                elif code in (ABS_X, ABS_Y):
+                    self._handle_stick(fd, info, code, value, now)
                 elif code in (ABS_Z, ABS_RZ):
-                    # Triggers 0..255 typically; treat > 150 as press
+                    # Analog triggers: press past 60 % of the device's range
+                    # (xpad reports 0..1023, DualSense 0..255).
                     button = "LT" if code == ABS_Z else "RT"
-                    pressed = value > 150
+                    rng = self._ranges.get(fd, {}).get(code)
+                    threshold = rng[0] + 0.6 * (rng[1] - rng[0]) if rng else 150
+                    pressed = value > threshold
                     held = button in self.engine.held
                     if pressed and not held:
                         self._nav_or_button(button, True, now)
                     elif not pressed and held:
                         self._nav_or_button(button, False, now)
+
+    def _handle_stick(self, fd: int, info: DeviceInfo, code: int, value: int, now: float) -> None:
+        rng = self._ranges.get(fd, {}).get(code)
+        if not rng:
+            return
+        pos = self._stick.setdefault(info.path, {"x": 0.0, "y": 0.0})
+        pos["x" if code == ABS_X else "y"] = normalize_axis(value, rng[0], rng[1])
+        deadzone = float(self.cfg.input.get("stick_deadzone", 0.35))
+        direction = stick_direction(pos["x"], pos["y"], deadzone)
+        source = f"stick:{info.path}"
+        if direction is None:
+            self.nav.release(source, now)
+            return
+        if not self.ui_mode:
+            return
+        fired = self.nav.press(source, direction, now)
+        if fired:
+            self._emit_nav(fired, False)
 
     def _handle_stdin_line(self, line: str) -> None:
         line = line.strip()
@@ -217,6 +275,8 @@ class ArcadeDaemon:
         typ = msg.get("t")
         if typ == "mode":
             self.ui_mode = bool(msg.get("ui"))
+            if not self.ui_mode:
+                self.nav.reset()
             emit({"t": "mode", "ui": self.ui_mode})
         elif typ == "reload":
             self.reload()
@@ -346,15 +406,19 @@ class ArcadeDaemon:
             for act in self.engine.tick(now):
                 self._handle_activation(act.binding, act.reason)
 
+            repeated = self.nav.tick(now)
+            if repeated:
+                self._emit_nav(repeated, True)
+
             done = self.tracker.poll()
             if done and done.state == "exited":
                 emit({"t": "session", **done.to_dict()})
                 self.tracker.clear()
 
-            deadline = self.engine.next_deadline()
+            deadlines = [d for d in (self.engine.next_deadline(), self.nav.next_deadline()) if d is not None]
             timeout = 0.05
-            if deadline is not None:
-                timeout = max(0.0, min(timeout, deadline - now))
+            if deadlines:
+                timeout = max(0.0, min(timeout, min(deadlines) - now))
 
             rlist = list(self._fds.keys()) + [stdin_fd]
             try:
