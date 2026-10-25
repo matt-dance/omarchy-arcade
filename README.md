@@ -155,7 +155,21 @@ Refresh is rare (14 days). The UI never waits on the network: it shows cache imm
 
 ### Optional API keys
 
-The git repo is public. **Never commit keys.** Copy the example file to a private path and lock it down:
+The git repo is public. **Never commit keys.** Arcade works without them; they only add box art (SteamGridDB) and descriptions for non-Steam games (IGDB).
+
+**In Arcade (controller-friendly):** `Start` → Settings → `A` opens **Metadata keys**. The same sheet opens from the first-run card on Home and from the system menu (Guide tap → Arcade › Metadata keys). Copy a key in your browser, then press `A` on its row to paste it from the clipboard (`wl-paste`). `X` types it instead (masked), `Y` clears that key, and **Test keys** checks each one against its API (`ok`, `invalid`, `unreachable`). Saving writes `keys.json` with mode `0600`, clears the cached IGDB token, and refreshes metadata that was fetched before the key existed (no 14-day wait). The overlay only ever sees *set / not set*.
+
+**In a terminal:**
+
+```bash
+~/.config/omarchy/plugins/matt-dance.arcade/bin/arcade-keys setup     # prompts without echo, then tests
+arcade-keys status                                # booleans only
+wl-paste | arcade-keys set steamgriddb            # or: --from-clipboard; names: steamgriddb, twitch-id, twitch-secret
+arcade-keys test
+arcade-keys remove twitch-secret                  # no name = remove all
+```
+
+**By hand:** copy the example file to a private path and lock it down:
 
 ```bash
 mkdir -p ~/.config/matt-dance.arcade
@@ -223,6 +237,7 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ├── bin/arcade-art         # Optional SteamGridDB cover + hero fetch
 ├── bin/arcade-meta        # Background game metadata (Steam, ProtonDB, optional IGDB/SGDB)
 ├── bin/arcade-sys         # System menu probes/actions (wpctl, nmcli, …)
+├── bin/arcade-keys        # Optional metadata key setup (status/set/test/remove/setup)
 ├── arcade/                # Python package
 ├── keys.example.json      # Empty optional API key template
 ├── default/arcade.toml
@@ -274,7 +289,8 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
 13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft (`wow.desktop` with `StartupWMClass=steam_app_battlenet` and a custom Exec) stays in the library; a small `wow.png` is centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
-14. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+14. **Metadata keys** — with no keys, Home shows the one-time keys card; Start → A opens the sheet and the card is gone next time. Copy a SteamGridDB key, press A on its row: status flips to *set*, `stat -c %a ~/.config/matt-dance.arcade/keys.json` prints `600`, Test keys says `SteamGridDB: ok`, and a game that had no box art gets it within a minute. A garbage clipboard (a sentence) shows an error and saves nothing. Guide tap → Arcade › Metadata keys opens the same sheet. `journalctl --user --grep matt-dance.arcade` never shows a key value
+15. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
 
