@@ -370,6 +370,7 @@ Item {
     root.startDaemon()
     root.loadLibraryFromDisk()
     root.rescan()
+    userConfigProbe.running = true
   }
 
   onManifestChanged: {
@@ -392,7 +393,40 @@ Item {
     onTriggered: {
       root.log("arcade.toml changed — reloading bindings")
       root.sendDaemon({ t: "reload" })
+      if (!userConfigProbe.running)
+        userConfigProbe.running = true
     }
+  }
+
+  // FileView can't watch a file that doesn't exist yet. Until arcade.toml
+  // appears, check for it every few seconds and load it once it does.
+  property bool userConfigMissing: false
+
+  Process {
+    id: userConfigProbe
+    command: ["/usr/bin/test", "-e", root.userConfigFile]
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        userConfigPoll.stop()
+        if (root.userConfigMissing) {
+          root.userConfigMissing = false
+          root.log("arcade.toml created — loading bindings")
+          userConfigView.reload()
+          root.sendDaemon({ t: "reload" })
+        }
+      } else {
+        root.userConfigMissing = true
+        if (!userConfigPoll.running)
+          userConfigPoll.start()
+      }
+    }
+  }
+
+  Timer {
+    id: userConfigPoll
+    interval: 3000
+    repeat: true
+    onTriggered: if (!userConfigProbe.running) userConfigProbe.running = true
   }
 
   FileView {
