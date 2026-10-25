@@ -791,6 +791,13 @@ Item {
                          || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab
                          || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) {
                 root.handleKey(event)
+              } else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right)
+                         && event.modifiers === Qt.NoModifier
+                         && searchInput.selectedText.length === 0
+                         && (searchInput.cursorPosition === 0
+                             || searchInput.cursorPosition === searchInput.text.length)) {
+                // Mid-text the arrows edit the query; at either end they move the grid.
+                root.handleKey(event)
               }
             }
           }
