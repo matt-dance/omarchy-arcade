@@ -94,6 +94,31 @@ def _is_steam_tool(app: dict, appid: int, name: str) -> bool:
     return False
 
 
+def installed_app_ids() -> set[int]:
+    """Appids with a fully-installed appmanifest (for desktop wrapper checks)."""
+    ids: set[int] = set()
+    for root in steam_roots():
+        for library in _library_folders(root):
+            apps = library / "steamapps"
+            if not apps.is_dir():
+                continue
+            for acf in apps.glob("appmanifest_*.acf"):
+                try:
+                    data = parse_text(acf.read_text(encoding="utf-8", errors="replace"))
+                except Exception:
+                    continue
+                app = data.get("AppState") or data.get("appstate") or {}
+                if not isinstance(app, dict) or not _manifest_installed(app):
+                    continue
+                try:
+                    appid = int(app.get("appid") or app.get("appID") or 0)
+                except ValueError:
+                    continue
+                if appid:
+                    ids.add(appid)
+    return ids
+
+
 def _manifest_installed(manifest: dict) -> bool:
     state = manifest.get("StateFlags") or manifest.get("stateflags") or "0"
     try:

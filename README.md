@@ -220,7 +220,7 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
-13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft with only a launcher icon stays in the library and shows that icon centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
+13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft (`wow.desktop` with `StartupWMClass=steam_app_battlenet` and a custom Exec) stays in the library; a small `wow.png` is centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
 14. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs

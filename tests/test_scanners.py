@@ -100,6 +100,10 @@ class TestDesktopScanner(unittest.TestCase):
         self.assertNotIn("GeForce NOW", {g.title for g in games})
         self.assertIn("desktop:super-meat-boy", ids)
         self.assertIn("desktop:battle.net", ids)
+        self.assertIn("desktop:wow", ids)
+        wow = next(g for g in games if g.id == "desktop:wow")
+        self.assertEqual(wow.title, "World of Warcraft")
+        self.assertEqual(wow.launch.value, str(apps / "wow.desktop"))
         # Bare Steam launcher skipped
         self.assertFalse(any("steam" == g.id.split(":")[-1] for g in games if g.source == "desktop"))
         # Steam-generated / steam://rungameid .desktop files fold into Steam, not Play on Desktop
@@ -112,6 +116,30 @@ class TestDesktopScanner(unittest.TestCase):
             "enshrouded",
             "steam steam://rungameid/1203620",
         ))
+        self.assertFalse(
+            desktop.is_steam_generated_desktop(
+                {"StartupWMClass": "steam_app_battlenet"},
+                "wow",
+                "/home/mdance/.local/bin/launch-wow",
+                installed_appids={570, 1245620},
+            )
+        )
+        self.assertTrue(
+            desktop.is_steam_generated_desktop(
+                {"StartupWMClass": "steam_app_570"},
+                "dota",
+                "/opt/custom/dota",
+                installed_appids={570},
+            )
+        )
+        self.assertFalse(
+            desktop.is_steam_generated_desktop(
+                {"StartupWMClass": "steam_app_570"},
+                "dota",
+                "/opt/custom/dota",
+                installed_appids=set(),
+            )
+        )
 
     def test_desktop_icon_is_icon_only_except_gfn(self):
         with tempfile.TemporaryDirectory() as tmp:
