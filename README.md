@@ -60,7 +60,10 @@ omarchy plugin remove matt-dance.arcade
 - **Open:** `Super + Ctrl + G`, Gaming › Arcade, or `Guide + Start` on a controller
 - **Home:** horizontal row of larger covers (recently played first, then the rest of the library). The focused card scales up. The details pane below shows hero/banner art, title, source badges including merged **Play on…** stores, last played or playtime, and **Play** / **Options**
 - **Browse Home:** D-pad left/right along the row, down into Play/Options, up back to the row. `A` plays, `X` opens Options (Play on… picker)
-- **Library:** `LB` / `RB` / Tab keeps the grid
+- **Library:** `LB` / `RB` (Tab / Shift+Tab) step through Home → All games → Favorites → one tab per store → Hidden. `Select` (F2) cycles the sort: Recently played, A–Z, Most played, Store. The choice is remembered
+- **Favorites:** `R3` (F3) stars the focused game. Home shows recently played first, then favorites, then the rest
+- **Options (`X`):** Play / Play on… each store, Add to or Remove from favorites, Hide from library (unhide from the Hidden tab), Refresh metadata
+- **Play history:** Arcade records its own last-played time and playtime for every game it launches, so GeForce NOW, Battle.net/Wine and `.desktop` games also sort by recent play. Stored in `${XDG_STATE_HOME:-~/.local/state}/matt-dance.arcade/state.json`
 - **Search:** `Y` opens an on-screen keyboard (D-pad/stick to move, `A` types, `X` deletes, `Y` adds a space, `Start` keeps the results, `B` cancels). On a keyboard, `/` or just start typing; Enter launches the top result and Esc clears
 - **Held input:** holding the D-pad or tilting the left stick repeats focus moves (deadzone: `stick_deadzone` in `arcade.toml`). `LT` / `RT` page through the grid
 - **Settings:** `Start` / `M`
@@ -224,6 +227,7 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ├── bin/arcade-art         # Optional SteamGridDB cover + hero fetch
 ├── bin/arcade-meta        # Background game metadata (Steam, ProtonDB, optional IGDB/SGDB)
 ├── bin/arcade-sys         # System menu probes/actions (wpctl, nmcli, …)
+├── bin/arcade-state       # Favorites / hidden / sort edits (state.json)
 ├── arcade/                # Python package
 ├── keys.example.json      # Empty optional API key template
 ├── default/arcade.toml
@@ -275,7 +279,9 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
 13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft (`wow.desktop` with `StartupWMClass=steam_app_battlenet` and a custom Exec) stays in the library; a small `wow.png` is centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
-14. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+14. **Favorites, hide, sort** — `R3` stars a game (star on the card, it moves into the favorites block on Home and focus stays on it); `X` → Hide removes it from Home/Library/Search and it appears under the Hidden tab; `Select` changes the Library order and survives closing Arcade; `~/.local/state/matt-dance.arcade/state.json` reflects each change
+15. **Play history** — play a GeForce NOW or Battle.net game for a few minutes and quit; on reopen it is first on Home and the details pane shows the playtime
+16. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
 

@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+"""Edit Arcade library state (favorites, hidden games, sort order)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade import state as library_state
+
+
+def _on_off(args: argparse.Namespace) -> bool | None:
+    if args.on:
+        return True
+    if args.off:
+        return False
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Edit Omarchy Arcade library state")
+    parser.add_argument("--path", type=Path, help="state.json to edit (default: XDG state dir)")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("show", help="Print state.json")
+
+    for name, help_text in (("favorite", "Toggle or set a favorite"), ("hide", "Toggle or set hidden")):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("game")
+        group = p.add_mutually_exclusive_group()
+        group.add_argument("--on", action="store_true")
+        group.add_argument("--off", action="store_true")
+
+    p_sort = sub.add_parser("sort", help="Set the library sort order")
+    p_sort.add_argument("mode", choices=library_state.SORTS)
+
+    args = parser.parse_args(argv)
+    path = args.path
+
+    if args.cmd == "show":
+        result = library_state.load(path)
+    elif args.cmd == "favorite":
+        result = library_state.set_favorite(args.game, _on_off(args), path)
+    elif args.cmd == "hide":
+        result = library_state.set_hidden(args.game, _on_off(args), path)
+    else:
+        result = library_state.set_sort(args.mode, path)
+
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

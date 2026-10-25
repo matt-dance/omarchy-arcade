@@ -41,6 +41,7 @@ from .model import Game
 from .nav import DPAD_DIRS, NavRepeater, normalize_axis, stick_direction
 from .paths import default_config_path, library_path
 from .session import SessionTracker
+from . import state as library_state
 
 
 def emit(obj: dict[str, Any], out: TextIO = sys.stdout) -> None:
@@ -289,6 +290,7 @@ class ArcadeDaemon:
             self.tracker.close(force=force)
             if force and current is not None:
                 emit({"t": "session", **current.to_dict()})
+                self._record_session_end(current)
                 self.tracker.clear()
         elif typ == "ping":
             emit({"t": "pong"})
@@ -336,6 +338,25 @@ class ArcadeDaemon:
         except Exception as exc:  # noqa: BLE001
             emit({"t": "session", "game": game_id, "state": "failed", "reason": str(exc)})
             emit({"t": "error", "error": f"launch: {exc}"})
+            return
+        try:
+            library_state.record_launch(game.id)
+        except Exception as exc:  # noqa: BLE001
+            emit({"t": "error", "error": f"state: {exc}"})
+
+    def _record_session_end(self, session: Any) -> None:
+        if session is None:
+            return
+        info = session.to_dict()
+        if info.get("reason") in ("failed", "no-window", "timeout"):
+            return
+        if not info.get("reason") and info.get("exitCode") == -1:
+            # Hand-off launch that was never confirmed running.
+            return
+        try:
+            library_state.record_session(str(info.get("game") or session.game_id), int(info.get("seconds") or 0))
+        except Exception as exc:  # noqa: BLE001
+            emit({"t": "error", "error": f"state: {exc}"})
 
     def _load_library(self) -> None:
         path = library_path()
@@ -416,6 +437,7 @@ class ArcadeDaemon:
             if changed is not None:
                 emit({"t": "session", **changed.to_dict()})
                 if changed.state in ("exited", "lost"):
+                    self._record_session_end(changed)
                     self.tracker.clear()
 
             deadlines = [d for d in (self.engine.next_deadline(), self.nav.next_deadline()) if d is not None]
