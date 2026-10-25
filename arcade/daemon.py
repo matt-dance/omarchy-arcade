@@ -37,6 +37,7 @@ from .linux_input import (
 from .model import Game
 from .paths import default_config_path, library_path
 from .session import SessionTracker
+from . import state as library_state
 
 
 def emit(obj: dict[str, Any], out: TextIO = sys.stdout) -> None:
@@ -229,6 +230,7 @@ class ArcadeDaemon:
             if self.tracker.current:
                 emit({"t": "session", **self.tracker.current.to_dict(), "state": self.tracker.current.state})
             if force:
+                self._record_session_end(self.tracker.current)
                 self.tracker.clear()
         elif typ == "ping":
             emit({"t": "pong"})
@@ -274,6 +276,25 @@ class ArcadeDaemon:
             emit({"t": "session", **session.to_dict()})
         except Exception as exc:  # noqa: BLE001
             emit({"t": "error", "error": f"launch: {exc}"})
+            return
+        try:
+            library_state.record_launch(game.id)
+        except Exception as exc:  # noqa: BLE001
+            emit({"t": "error", "error": f"state: {exc}"})
+
+    def _record_session_end(self, session: Any) -> None:
+        if session is None:
+            return
+        info = session.to_dict()
+        if info.get("reason") in ("failed", "no-window", "timeout"):
+            return
+        if not info.get("reason") and info.get("exitCode") == -1:
+            # Hand-off launch that was never confirmed running.
+            return
+        try:
+            library_state.record_session(str(info.get("game") or session.game_id), int(info.get("seconds") or 0))
+        except Exception as exc:  # noqa: BLE001
+            emit({"t": "error", "error": f"state: {exc}"})
 
     def _load_library(self) -> None:
         path = library_path()
@@ -349,6 +370,7 @@ class ArcadeDaemon:
             done = self.tracker.poll()
             if done and done.state == "exited":
                 emit({"t": "session", **done.to_dict()})
+                self._record_session_end(done)
                 self.tracker.clear()
 
             deadline = self.engine.next_deadline()
