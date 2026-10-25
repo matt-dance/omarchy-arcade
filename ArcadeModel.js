@@ -209,6 +209,9 @@ function isIconOnly(game) {
 function isSmallArt(game, implicitW, implicitH) {
   if (isIconOnly(game))
     return true
+  if (game && game.art && game.art.icon && game.art.cover
+      && game.art.cover === game.art.icon && !game.art.hero)
+    return true
   var w = Number(implicitW) || 0
   var h = Number(implicitH) || 0
   if (w <= 0 && h <= 0)

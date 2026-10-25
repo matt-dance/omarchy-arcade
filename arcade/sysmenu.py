@@ -7,25 +7,89 @@ the menu instead of showing dead items.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+
+# Quickshell Process often inherits a stripped PATH. Search these too.
+_BIN_DIRS = (
+    "/usr/bin",
+    "/usr/local/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+)
+
+
+def extra_bin_dirs() -> list[Path]:
+    home = Path.home()
+    dirs = [
+        home / ".local" / "bin",
+        home / ".local" / "share" / "omarchy" / "bin",
+        Path("/usr/share/omarchy/bin"),
+        Path("/usr/lib/omarchy/bin"),
+    ]
+    omarchy = os.environ.get("OMARCHY_PATH")
+    if omarchy:
+        dirs.insert(0, Path(omarchy) / "bin")
+    return dirs
+
+
+def ensure_search_path() -> str:
+    """Prepend standard bin dirs so shutil.which works inside Quickshell."""
+    current = [p for p in os.environ.get("PATH", "").split(":") if p]
+    extra = [str(Path(p)) for p in _BIN_DIRS] + [str(p) for p in extra_bin_dirs()]
+    merged: list[str] = []
+    for part in extra + current:
+        if part and part not in merged:
+            merged.append(part)
+    os.environ["PATH"] = ":".join(merged)
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    os.environ.setdefault("XDG_RUNTIME_DIR", runtime)
+    bus = Path(runtime) / "bus"
+    if "DBUS_SESSION_BUS_ADDRESS" not in os.environ and bus.exists():
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    return os.environ["PATH"]
+
+
+def resolve_bin(name: str, *, search_path: bool = True) -> str | None:
+    """Find an executable by PATH and well-known absolute directories."""
+    if not name:
+        return None
+    path = Path(name)
+    if path.is_absolute():
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+    if search_path:
+        found = shutil.which(name)
+        if found:
+            return found
+    for directory in list(_BIN_DIRS) + [str(p) for p in extra_bin_dirs()]:
+        candidate = Path(directory) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 class Host:
     """OS facade so status/actions can be tested without real devices."""
 
     def which(self, name: str) -> str | None:
-        return shutil.which(name)
+        return resolve_bin(name)
 
-    def run(self, argv: list[str], timeout: float = 3.0) -> tuple[int, str, str]:
+    def run(self, argv: list[str], timeout: float = 1.2) -> tuple[int, str, str]:
         if not argv:
             return 127, "", "empty command"
+        resolved = list(argv)
+        found = self.which(resolved[0])
+        if found:
+            resolved[0] = found
         try:
             proc = subprocess.run(
-                argv,
+                resolved,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -60,6 +124,10 @@ def first_bin(host: Host, names: list[str]) -> str | None:
         if host.which(name):
             return name
     return None
+
+
+def log_tool(name: str, value: str | None) -> None:
+    print(f"matt-dance.arcade: tool {name}={value or 'missing'}", file=sys.stderr, flush=True)
 
 
 def parse_wpctl_volume(text: str) -> tuple[int | None, bool]:
@@ -293,8 +361,8 @@ def read_batteries(host: Host) -> dict[str, Any]:
     return {"system": system, "controllers": controllers}
 
 
-def _probe_tools(host: Host) -> dict[str, str | None]:
-    return {
+def _probe_tools(host: Host, *, log: bool = True) -> dict[str, str | None]:
+    tools = {
         "volume": first_bin(host, ["omarchy-audio-output-volume", "wpctl"]),
         "volume_read": first_bin(host, ["wpctl"]),
         "mute": first_bin(host, ["omarchy-audio-output-volume", "wpctl"]),
@@ -310,17 +378,23 @@ def _probe_tools(host: Host) -> dict[str, str | None]:
         "screenshot": first_bin(host, ["omarchy-capture-screenshot"]),
         "record": first_bin(host, ["omarchy-capture-screenrecording"]),
         "dnd": first_bin(host, ["omarchy-toggle-notification-silencing", "makoctl"]),
-        "lock": first_bin(host, ["omarchy-system-lock", "hyprlock", "loginctl"]),
-        "suspend": first_bin(host, ["systemctl"]),
-        "reboot": first_bin(host, ["omarchy-system-reboot", "systemctl"]),
-        "shutdown": first_bin(host, ["omarchy-system-shutdown", "systemctl"]),
-        "logout": first_bin(host, ["omarchy-system-logout", "hyprctl", "loginctl"]),
+        "lock": first_bin(host, ["omarchy-system-lock", "hyprlock", "loginctl"]) or "loginctl",
+        "suspend": first_bin(host, ["systemctl"]) or "systemctl",
+        "reboot": first_bin(host, ["omarchy-system-reboot", "systemctl"]) or "systemctl",
+        "shutdown": first_bin(host, ["omarchy-system-shutdown", "systemctl"]) or "systemctl",
+        "logout": first_bin(host, ["omarchy-system-logout", "hyprctl", "loginctl"]) or "loginctl",
         "mangohud": first_bin(host, ["mangohud"]) or "keys",
     }
+    if log:
+        print(f"matt-dance.arcade: tool PATH={os.environ.get('PATH', '')}", file=sys.stderr, flush=True)
+        for key, value in tools.items():
+            log_tool(key, value)
+    return tools
 
 
 def collect_status(host: Host | None = None) -> dict[str, Any]:
     host = host or Host()
+    ensure_search_path()
     tools = _probe_tools(host)
     audio = {"volume": None, "muted": False, "sinks": []}
     if tools["volume_read"] == "wpctl":
@@ -369,19 +443,17 @@ def collect_status(host: Host | None = None) -> dict[str, Any]:
             bluetooth["powered"] = parse_bluetoothctl_powered(out)
         _code, paired_out, _err = host.run(["bluetoothctl", "devices", "Paired"])
         paired = parse_bluetoothctl_devices(paired_out)
-        devices = []
-        for dev in paired:
-            _code, info_out, _err = host.run(["bluetoothctl", "info", dev["mac"]])
-            info = parse_bluetoothctl_info(info_out)
-            devices.append(
-                {
-                    "mac": dev["mac"],
-                    "name": info.get("name") or dev["name"],
-                    "connected": bool(info.get("connected")),
-                    "paired": True,
-                }
-            )
-        bluetooth["devices"] = devices
+        _code, connected_out, _err = host.run(["bluetoothctl", "devices", "Connected"])
+        connected_macs = {d["mac"] for d in parse_bluetoothctl_devices(connected_out)}
+        bluetooth["devices"] = [
+            {
+                "mac": dev["mac"],
+                "name": dev["name"],
+                "connected": dev["mac"] in connected_macs,
+                "paired": True,
+            }
+            for dev in paired
+        ]
 
     wifi: dict[str, Any] = {"powered": None, "ssid": "", "networks": [], "backend": tools["wifi"]}
     if tools["wifi"] == "nmcli":
@@ -396,7 +468,8 @@ def collect_status(host: Host | None = None) -> dict[str, Any]:
                 wifi["ssid"] = parts[0]
                 break
         _code, listed, _err = host.run(
-            ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]
+            ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"],
+            timeout=1.5,
         )
         wifi["networks"] = parse_nmcli_wifi(listed)
         if not wifi["ssid"]:
@@ -671,26 +744,16 @@ def build_menu(status: dict[str, Any], session_title: str | None = None) -> list
             }
         )
 
-    power_ids = ("lock", "suspend", "reboot", "shutdown", "logout")
-    if any(tools.get(name) for name in power_ids):
-        items.append(_header("Power"))
-        labels = {
-            "lock": "Lock",
-            "suspend": "Suspend",
-            "reboot": "Restart",
-            "shutdown": "Shut down",
-            "logout": "Log out",
-        }
-        for name in power_ids:
-            if tools.get(name):
-                items.append(
-                    _action(
-                        name,
-                        labels[name],
-                        "Power",
-                        confirm=True,
-                    )
-                )
+    # systemctl / loginctl are always present on Omarchy; never hide Power.
+    items.append(_header("Power"))
+    for name, label in (
+        ("lock", "Lock"),
+        ("suspend", "Suspend"),
+        ("reboot", "Restart"),
+        ("shutdown", "Shut down"),
+        ("logout", "Log out"),
+    ):
+        items.append(_action(name, label, "Power", confirm=True))
 
     return items
 
@@ -702,7 +765,8 @@ def apply_action(
 ) -> dict[str, Any]:
     host = host or Host()
     args = args or {}
-    tools = _probe_tools(host)
+    ensure_search_path()
+    tools = _probe_tools(host, log=False)
 
     def ok(detail: str = "") -> dict[str, Any]:
         return {"ok": True, "action": action, "detail": detail}
@@ -899,14 +963,10 @@ def apply_action(
         if host.which("hyprlock"):
             run(["hyprlock"])
             return ok()
-        if host.which("loginctl"):
-            run(["loginctl", "lock-session"])
-            return ok()
-        return fail("lock unavailable")
+        run(["loginctl", "lock-session"])
+        return ok()
 
     if action == "suspend":
-        if not tools.get("suspend"):
-            return fail("suspend unavailable")
         run(["systemctl", "suspend"])
         return ok()
 
@@ -914,19 +974,15 @@ def apply_action(
         if tools.get("reboot") == "omarchy-system-reboot":
             run(["omarchy-system-reboot"])
             return ok()
-        if host.which("systemctl"):
-            run(["systemctl", "reboot"])
-            return ok()
-        return fail("reboot unavailable")
+        run(["systemctl", "reboot"])
+        return ok()
 
     if action == "shutdown":
         if tools.get("shutdown") == "omarchy-system-shutdown":
             run(["omarchy-system-shutdown"])
             return ok()
-        if host.which("systemctl"):
-            run(["systemctl", "poweroff"])
-            return ok()
-        return fail("shutdown unavailable")
+        run(["systemctl", "poweroff"])
+        return ok()
 
     if action == "logout":
         if tools.get("logout") == "omarchy-system-logout":
@@ -935,19 +991,30 @@ def apply_action(
         if host.which("hyprctl"):
             run(["hyprctl", "dispatch", "exit"])
             return ok()
-        if host.which("loginctl"):
-            run(["loginctl", "terminate-session", ""])
-            return ok()
-        return fail("logout unavailable")
+        run(["loginctl", "terminate-session", ""])
+        return ok()
 
     return fail(f"unknown action {action}")
 
 
 def menu_payload(session_title: str | None = None, host: Host | None = None) -> dict[str, Any]:
-    status = collect_status(host)
+    host = host or Host()
+    ensure_search_path()
+    try:
+        status = collect_status(host)
+    except Exception as exc:  # noqa: BLE001
+        print(f"matt-dance.arcade: collect_status failed: {exc}", file=sys.stderr, flush=True)
+        status = {"tools": _probe_tools(host)}
+    items = build_menu(status, session_title)
+    sections = [i["label"] for i in items if i.get("kind") == "header"]
+    print(
+        f"matt-dance.arcade: sysmenu items={len(items)} sections={','.join(sections)}",
+        file=sys.stderr,
+        flush=True,
+    )
     return {
         "status": status,
-        "items": build_menu(status, session_title),
+        "items": items,
         "sessionTitle": session_title or "",
     }
 

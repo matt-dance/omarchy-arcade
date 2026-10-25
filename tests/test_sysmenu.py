@@ -8,12 +8,14 @@ from arcade.sysmenu import (
     Host,
     apply_action,
     build_menu,
+    ensure_search_path,
     parse_bluetoothctl_devices,
     parse_nmcli_wifi,
     parse_powerprofiles,
     parse_wpctl_sinks,
     parse_wpctl_volume,
     read_batteries,
+    resolve_bin,
 )
 
 
@@ -99,7 +101,11 @@ class TestBuildMenuHidesMissing(unittest.TestCase):
         self.assertEqual(_ids(items)[:4], ["resume", "close", "force", "arcade"])
         self.assertNotIn("Audio", _sections(items))
         self.assertNotIn("Wi-Fi", _sections(items))
-        self.assertNotIn("Power", _sections(items))
+        self.assertIn("Power", _sections(items))
+        self.assertEqual(
+            [i["id"] for i in items if i.get("section") == "Power" and i.get("kind") != "header"],
+            ["lock", "suspend", "reboot", "shutdown", "logout"],
+        )
 
     def test_volume_and_power_only_when_tooled(self):
         status = {
@@ -124,7 +130,7 @@ class TestBuildMenuHidesMissing(unittest.TestCase):
         self.assertIn("Power", _sections(items))
         self.assertIn("lock", _ids(items))
         self.assertIn("suspend", _ids(items))
-        self.assertNotIn("reboot", _ids(items))
+        self.assertIn("reboot", _ids(items))
         lock = next(i for i in items if i["id"] == "lock")
         self.assertTrue(lock.get("confirm"))
 
@@ -231,6 +237,40 @@ class TestQmlContracts(unittest.TestCase):
         self.assertIn("showQuickMenu", arcade)
         self.assertIn("menuPinned", arcade)
         self.assertIn("surface", arcade)
+        self.assertIn('"/usr/bin/python3", "-u"', qml)
+        self.assertIn("sysmenu payload", qml)
+        self.assertIn('label: "Power"', qml)
+
+
+class TestResolveBin(unittest.TestCase):
+    def test_absolute_path_without_path_env(self):
+        import os
+        from unittest import mock
+
+        ensure_search_path()
+        with mock.patch.dict(os.environ, {"PATH": ""}, clear=False):
+            found = resolve_bin("python3", search_path=False)
+        self.assertTrue(found)
+        self.assertTrue(found.endswith("python3"))
+
+    def test_probe_defaults_power_and_logs(self):
+        import io
+        from contextlib import redirect_stderr
+
+        from arcade.sysmenu import _probe_tools
+
+        host = FakeHost(bins=["wpctl", "bluetoothctl", "nmcli"])
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            tools = _probe_tools(host)
+        self.assertEqual(tools["volume"], "wpctl")
+        self.assertEqual(tools["bluetoothctl"], "bluetoothctl")
+        self.assertEqual(tools["wifi"], "nmcli")
+        self.assertEqual(tools["suspend"], "systemctl")
+        self.assertEqual(tools["lock"], "loginctl")
+        text = buf.getvalue()
+        self.assertIn("tool volume=wpctl", text)
+        self.assertIn("tool suspend=systemctl", text)
 
 
 if __name__ == "__main__":

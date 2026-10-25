@@ -7,6 +7,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 
 _TITLE_STRIP = re.compile(r"[^a-z0-9]+")
@@ -109,6 +110,92 @@ class ArtSpec:
         return d
 
 
+def path_from_uri(uri: str | None) -> Path | None:
+    if not uri:
+        return None
+    text = str(uri)
+    if text.startswith("file://"):
+        parsed = urlparse(text)
+        path = unquote(parsed.path or "")
+        return Path(path) if path else None
+    path = Path(text)
+    return path if path.is_absolute() else None
+
+
+def image_max_edge(path: Path) -> int | None:
+    """Largest pixel edge of a PNG/GIF/JPEG/ICO/WebP, or None if unknown."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) < 24:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        w = int.from_bytes(data[16:20], "big")
+        h = int.from_bytes(data[20:24], "big")
+        return max(w, h)
+    if data.startswith((b"GIF87a", b"GIF89a")) and len(data) >= 10:
+        w = int.from_bytes(data[6:8], "little")
+        h = int.from_bytes(data[8:10], "little")
+        return max(w, h)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        if data[12:16] == b"VP8X" and len(data) >= 30:
+            w = 1 + int.from_bytes(data[24:27], "little")
+            h = 1 + int.from_bytes(data[27:30], "little")
+            return max(w, h)
+        if data[12:16] == b"VP8 " and len(data) >= 30:
+            w = int.from_bytes(data[26:28], "little") & 0x3FFF
+            h = int.from_bytes(data[28:30], "little") & 0x3FFF
+            return max(w, h)
+    if data[:4] == b"\x00\x00\x01\x00" and len(data) >= 8:
+        count = int.from_bytes(data[4:6], "little") or 1
+        w = data[6] or 256
+        h = data[7] or 256
+        return max(w, h) if count else None
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB}:
+                h = int.from_bytes(data[i + 5 : i + 7], "big")
+                w = int.from_bytes(data[i + 7 : i + 9], "big")
+                return max(w, h)
+            if marker == 0xD8 or marker == 0xD9:
+                i += 2
+                continue
+            if i + 4 > len(data):
+                break
+            seglen = int.from_bytes(data[i + 2 : i + 4], "big")
+            if seglen < 2:
+                break
+            i += 2 + seglen
+    return None
+
+
+def stamp_icon_only(art: ArtSpec) -> ArtSpec:
+    """Mark tiny launcher icons so QML will not stretch them as covers."""
+    if art.icon_only or not art.cover:
+        return art
+    cover = str(art.cover)
+    if art.icon and cover == str(art.icon) and not art.hero and cover.startswith("file:"):
+        art.icon_only = True
+        return art
+    path = path_from_uri(cover)
+    if path is None:
+        return art
+    text = str(path).casefold()
+    if path.suffix.casefold() == ".svg" or "/icons/" in text or "/.icons/" in text:
+        art.icon_only = True
+        return art
+    edge = image_max_edge(path)
+    if edge is not None and edge < 256:
+        art.icon_only = True
+    return art
+
+
 @dataclass
 class Game:
     id: str
@@ -145,6 +232,7 @@ class Game:
         return t
 
     def to_dict(self) -> dict[str, Any]:
+        stamp_icon_only(self.art)
         return {
             "id": self.id,
             "title": self.title,

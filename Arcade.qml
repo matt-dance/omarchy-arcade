@@ -619,9 +619,8 @@ Item {
                   source: Model.coverUrl(modelData)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
+                  // Do not set sourceSize — it upscales tiny icons before we can measure them.
                   visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
-                  sourceSize.width: Model.isIconOnly(modelData) ? 0 : root.homeCardW
-                  sourceSize.height: Model.isIconOnly(modelData) ? 0 : root.homeCardH
                 }
 
                 Rectangle {
@@ -899,8 +898,6 @@ Item {
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
-                sourceSize.width: Model.isIconOnly(modelData) ? 0 : root.cardW
-                sourceSize.height: Model.isIconOnly(modelData) ? 0 : root.cardH
               }
 
               Rectangle {

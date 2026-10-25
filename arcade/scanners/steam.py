@@ -294,7 +294,7 @@ def _scan_shortcuts(root: Path) -> list[Game]:
                     steam_app_id=steam_id,
                     launch=launch,
                     track=TrackSpec(steam_app_id=steam_id, handoff=True),
-                    art=ArtSpec(cover=cover, icon=cover),
+                    art=ArtSpec(cover=cover, icon=cover, icon_only=bool(cover)),
                     description=str(exe).strip('"') if exe else None,
                     dedupe_keys=[
                         f"steam:{steam_id}",

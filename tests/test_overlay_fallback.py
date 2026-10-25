@@ -70,6 +70,7 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("persistQuickMenu", qml)
         self.assertIn("Image.Pad", qml)
         self.assertIn("isSmallArt", qml)
+        self.assertIn("Do not set sourceSize", qml)
 
     def test_show_quick_menu_logs_and_persists(self):
         qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")

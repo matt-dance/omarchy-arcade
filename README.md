@@ -108,6 +108,9 @@ You should see journal lines like:
 - `matt-dance.arcade: open surface=quickmenu persist=…`
 - `matt-dance.arcade: persistQuickMenu tick=… — re-summoning system menu`
 - `matt-dance.arcade: QuickMenu.open already=…`
+- `matt-dance.arcade: tool PATH=…`
+- `matt-dance.arcade: tool volume=wpctl` (one line per tool; `missing` if absent)
+- `matt-dance.arcade: sysmenu items=… sections=Game,Audio,…`
 
 `omarchy plugin disable matt-dance.arcade` then `enable` is worth trying, but **restart the shell** if arcaded still does not appear. A hot-reload after a failed QML load is not enough.
 
@@ -212,7 +215,7 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
 7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
-8. **System menu tools** — volume/mute/output (wpctl / omarchy-audio-*), brightness, night light, Bluetooth scan/pair, Wi-Fi picker, MangoHud, power profile, screenshot/record, do-not-disturb; missing tools stay hidden; battery shown for the machine and pads when sysfs exposes it
+8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…`. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
 9. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
 10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver

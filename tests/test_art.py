@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from arcade.art import fetch_sgdb_image, search_sgdb_game_id, sgdb_json
+from arcade.model import ArtSpec, image_max_edge, path_from_uri, stamp_icon_only
 
 
 class _FakeResp:
@@ -23,6 +24,41 @@ class _FakeResp:
 
     def __exit__(self, *exc):
         return False
+
+
+def _png(width: int, height: int) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+
+
+class TestIconOnlyInference(unittest.TestCase):
+    def test_png_edge_and_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            small = Path(tmp) / "wow.png"
+            large = Path(tmp) / "cover.png"
+            small.write_bytes(_png(64, 64))
+            large.write_bytes(_png(600, 900))
+            self.assertEqual(image_max_edge(small), 64)
+            self.assertEqual(image_max_edge(large), 900)
+            tiny = ArtSpec(cover=small.as_uri(), icon=small.as_uri())
+            stamp_icon_only(tiny)
+            self.assertTrue(tiny.icon_only)
+            box = ArtSpec(cover=large.as_uri())
+            stamp_icon_only(box)
+            self.assertFalse(box.icon_only)
+
+    def test_matching_icon_cover_is_icon_only(self):
+        art = ArtSpec(cover="file:///tmp/wow.png", icon="file:///tmp/wow.png")
+        stamp_icon_only(art)
+        self.assertTrue(art.icon_only)
+        self.assertEqual(path_from_uri("file:///tmp/foo%20bar.png"), Path("/tmp/foo bar.png"))
 
 
 class TestSteamGridDB(unittest.TestCase):

@@ -44,7 +44,13 @@ Item {
     { id: "resume", kind: "action", label: "Resume", section: "Game" },
     { id: "close", kind: "action", label: "Close game", section: "Game" },
     { id: "force", kind: "action", label: "Force quit", section: "Game" },
-    { id: "arcade", kind: "action", label: "Back to Arcade", section: "Game" }
+    { id: "arcade", kind: "action", label: "Back to Arcade", section: "Game" },
+    { id: "sec-power", kind: "header", label: "Power", section: "Power" },
+    { id: "lock", kind: "action", label: "Lock", section: "Power", confirm: true },
+    { id: "suspend", kind: "action", label: "Suspend", section: "Power", confirm: true },
+    { id: "reboot", kind: "action", label: "Restart", section: "Power", confirm: true },
+    { id: "shutdown", kind: "action", label: "Shut down", section: "Power", confirm: true },
+    { id: "logout", kind: "action", label: "Log out", section: "Power", confirm: true }
   ]
 
   function sessionTitle() {
@@ -129,7 +135,7 @@ Item {
   }
 
   function pythonCmd(extra) {
-    var args = ["/usr/bin/python3", root.sysBin]
+    var args = ["/usr/bin/python3", "-u", root.sysBin]
     for (var i = 0; i < extra.length; i++)
       args.push(extra[i])
     return args
@@ -146,11 +152,23 @@ Item {
     try {
       var data = JSON.parse(text)
       root.status = data.status || {}
-      root.items = data.items || []
+      var next = data.items || []
+      root.items = next.length ? next : root.fallbackItems
       root.clampSelection()
       if (!root.statusLine)
         root.statusLine = ""
+      var tools = root.status.tools || {}
+      var toolKeys = Object.keys(tools)
+      var found = []
+      for (var i = 0; i < toolKeys.length; i++) {
+        if (tools[toolKeys[i]])
+          found.push(toolKeys[i] + "=" + tools[toolKeys[i]])
+      }
+      console.warn("matt-dance.arcade: sysmenu payload items=" + root.items.length
+                   + " tools=" + (found.length ? found.join(",") : "none"))
     } catch (e) {
+      console.warn("matt-dance.arcade: sysmenu payload parse failed: " + e
+                   + " text=" + String(text || "").slice(0, 180))
       if (!root.items.length)
         root.items = root.fallbackItems
     }
@@ -672,6 +690,8 @@ Item {
       }
     }
     onExited: function(exitCode, exitStatus) {
+      console.warn("matt-dance.arcade: arcade-sys items exit=" + exitCode
+                   + " items=" + (root.items ? root.items.length : 0))
       if (exitCode !== 0 && (!root.items || !root.items.length))
         root.items = root.fallbackItems
     }
