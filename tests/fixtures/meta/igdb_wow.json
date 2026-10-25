@@ -1,0 +1,24 @@
+[
+  {
+    "id": 123,
+    "name": "World of Warcraft",
+    "summary": "A massively multiplayer online role-playing game set in Azeroth.",
+    "genres": [{"id": 12, "name": "Role-playing (RPG)"}],
+    "involved_companies": [
+      {
+        "company": {"name": "Blizzard Entertainment"},
+        "developer": true,
+        "publisher": true
+      }
+    ],
+    "first_release_date": 1096588800,
+    "aggregated_rating": 88.4,
+    "screenshots": [{"image_id": "wowss0"}],
+    "cover": {"image_id": "wowcover"}
+  },
+  {
+    "id": 456,
+    "name": "World of Warcraft Classic",
+    "summary": "The classic experience."
+  }
+]

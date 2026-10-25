@@ -10,3 +10,5 @@ __pycache__/
 *.qmlc
 .DS_Store
 /agent-tools/
+keys.json
+*.keys.json

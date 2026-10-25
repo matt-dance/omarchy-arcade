@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_CACHE_STEM = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 SOURCE_LABELS = {
@@ -37,6 +40,12 @@ _MONTHS = (
     "Nov",
     "Dec",
 )
+
+
+def cache_stem(game_id: str | None) -> str:
+    """Map a game id to the metadata filename stem. Mirrors ArcadeModel.js cacheStem()."""
+    stem = _CACHE_STEM.sub("_", str(game_id or "").strip())
+    return stem or "unknown"
 
 
 def source_label(source: str | None) -> str:

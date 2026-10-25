@@ -41,6 +41,8 @@ Item {
   property string focusZone: "shelf"   // shelf | details
   property int detailButton: 0         // 0 Play, 1 Options
   property var focusedGame: null
+  property var selectedMeta: ({})
+  property string pendingMetaId: ""
   property bool menuPinned: false
   property bool libraryBeneathMenu: false
 
@@ -50,6 +52,12 @@ Item {
     Quickshell.env("XDG_CACHE_HOME") || ""
   )
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
+  readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
+  readonly property string metaFile: Model.metaFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_CACHE_HOME") || "",
+    root.focusedGame ? root.focusedGame.id : ""
+  )
 
   readonly property color background: Commons.Color.menu.background
   readonly property color foreground: Commons.Color.menu.text
@@ -227,6 +235,61 @@ Item {
       root.focusedGame = root.visibleGames[root.selectedIndex]
     else
       root.focusedGame = null
+    root.loadMetaFromDisk()
+    root.ensureMeta(root.focusedGame)
+  }
+
+  function loadMetaFromDisk() {
+    if (!root.metaFile) {
+      if (!root.focusedGame)
+        root.selectedMeta = {}
+      return
+    }
+    var text = ""
+    try {
+      text = metaView.text()
+    } catch (e) {
+      text = ""
+    }
+    var parsed = Model.parseMetaText(text)
+    if (parsed && parsed.id) {
+      root.selectedMeta = parsed
+      console.warn("matt-dance.arcade: meta loaded id=" + parsed.id
+                   + " file=" + root.metaFile)
+    }
+  }
+
+  function applyMetaStdout(text) {
+    if (!text || !String(text).length)
+      return
+    var data
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      return
+    }
+    if (data && data.meta && data.meta.id) {
+      if (!root.focusedGame || data.meta.id === root.focusedGame.id)
+        root.selectedMeta = data.meta
+    }
+    if (data && data.artUpdated > 0)
+      root.loadLibraryFromDisk()
+  }
+
+  function ensureMeta(game) {
+    if (!game || !game.id)
+      return
+    if (root.selectedMeta && root.selectedMeta.id === game.id && Model.metaIsFresh(root.selectedMeta))
+      return
+    if (metaProcess.running) {
+      root.pendingMetaId = game.id
+      return
+    }
+    root.pendingMetaId = ""
+    metaProcess.command = ["/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir, game.id]
+    console.warn("matt-dance.arcade: overlay starting arcade-meta " + game.id
+                 + " file=" + root.metaFile)
+    metaProcess.running = true
   }
 
   function moveHome(dx, dy) {
@@ -557,7 +620,7 @@ Item {
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live. SteamGridDB key (optional): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nOptional API keys: ~/.config/matt-dance.arcade/keys.json (chmod 600). Copy keys.example.json.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -624,7 +687,7 @@ Item {
                   anchors.fill: parent
                   anchors.margins: 3
                   clip: true
-                  source: Model.coverUrl(modelData)
+                  source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
                   visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
@@ -716,7 +779,7 @@ Item {
             Image {
               id: heroArt
               anchors.fill: parent
-              source: Model.heroUrl(root.focusedGame)
+              source: Model.heroUrl(root.focusedGame, root.selectedMeta)
               fillMode: Image.PreserveAspectCrop
               asynchronous: true
               visible: status === Image.Ready
@@ -725,7 +788,7 @@ Item {
 
             Image {
               anchors.fill: parent
-              source: Model.coverUrl(root.focusedGame)
+              source: Model.coverUrl(root.focusedGame, root.selectedMeta)
               fillMode: Image.PreserveAspectCrop
               asynchronous: true
               visible: heroArt.status !== Image.Ready && status === Image.Ready
@@ -787,12 +850,73 @@ Item {
 
               Text {
                 Layout.fillWidth: true
-                visible: Model.playMeta(root.focusedGame).length > 0
-                text: Model.playMeta(root.focusedGame)
+                visible: Model.playMeta(root.focusedGame, root.selectedMeta).length > 0
+                text: Model.playMeta(root.focusedGame, root.selectedMeta)
                 color: root.foreground
                 opacity: 0.75
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
+                wrapMode: Text.WordWrap
+              }
+
+              Flow {
+                Layout.fillWidth: true
+                spacing: Style.spacing.xs
+                visible: Model.metaChips(root.selectedMeta).length > 0
+
+                Repeater {
+                  model: Model.metaChips(root.selectedMeta)
+                  Rectangle {
+                    required property var modelData
+                    width: metaChipText.implicitWidth + Style.space(14)
+                    height: metaChipText.implicitHeight + Style.space(6)
+                    radius: height / 2
+                    color: Qt.rgba(1, 1, 1, 0.08)
+                    border.color: Qt.rgba(1, 1, 1, 0.16)
+                    border.width: 1
+                    Text {
+                      id: metaChipText
+                      anchors.centerIn: parent
+                      text: modelData
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+              }
+
+              Text {
+                Layout.fillWidth: true
+                visible: Model.descriptionText(root.focusedGame, root.selectedMeta).length > 0
+                text: Model.descriptionText(root.focusedGame, root.selectedMeta)
+                color: root.foreground
+                opacity: 0.8
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                wrapMode: Text.WordWrap
+                maximumLineCount: 4
+                elide: Text.ElideRight
+              }
+
+              Row {
+                Layout.fillWidth: true
+                spacing: Style.spacing.xs
+                visible: root.selectedMeta && root.selectedMeta.screenshots && root.selectedMeta.screenshots.length
+
+                Repeater {
+                  model: (root.selectedMeta && root.selectedMeta.screenshots) ? root.selectedMeta.screenshots : []
+                  Image {
+                    required property var modelData
+                    width: Style.space(Math.round(120 * root.uiScale))
+                    height: Style.space(Math.round(68 * root.uiScale))
+                    source: modelData
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    sourceSize.width: width
+                    sourceSize.height: height
+                  }
+                }
               }
 
               Item { Layout.fillHeight: true }
@@ -1222,6 +1346,37 @@ Item {
     onLoaded: root.loadLibraryFromDisk()
   }
 
+  FileView {
+    id: metaView
+    path: root.metaFile
+    watchChanges: true
+    onFileChanged: root.loadMetaFromDisk()
+    onLoaded: root.loadMetaFromDisk()
+  }
+
+  Process {
+    id: metaProcess
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.applyMetaStdout(text)
+        root.loadMetaFromDisk()
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.loadMetaFromDisk()
+      if (exitCode !== 0)
+        console.warn("matt-dance.arcade: overlay arcade-meta exited " + exitCode)
+      if (!root.pendingMetaId)
+        return
+      var next = root.pendingMetaId
+      root.pendingMetaId = ""
+      Qt.callLater(function() {
+        if (root.focusedGame && root.focusedGame.id === next)
+          root.ensureMeta(root.focusedGame)
+      })
+    }
+  }
+
   Process {
     id: localScanProcess
     stdout: StdioCollector {
@@ -1247,6 +1402,11 @@ Item {
   }
 
   onSelectedIndexChanged: root.updateFocused()
+  onMetaFileChanged: {
+    if (metaView && typeof metaView.reload === "function")
+      metaView.reload()
+    root.loadMetaFromDisk()
+  }
 
   Component.onCompleted: {
     console.warn("matt-dance.arcade: overlay loaded; cache=" + root.libraryFile)

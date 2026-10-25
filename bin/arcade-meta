@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+"""Fetch per-game metadata into the on-disk cache (never run this from QML inline)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.meta.cache import load_cached, meta_json_path
+from arcade.meta.keys import load_keys
+from arcade.meta.resolve import apply_art_to_library, resolve_library
+from arcade.model import read_library
+from arcade.paths import library_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Cache Arcade game metadata")
+    parser.add_argument("ids", nargs="*", help="Game ids (default: recently played)")
+    parser.add_argument("--plugin-dir", type=Path, default=ROOT)
+    parser.add_argument("--force", action="store_true", help="Refresh even if the cache is fresh")
+    parser.add_argument("--offline", action="store_true", help="Use cache + local Steam data only")
+    parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--library", type=Path, help="library.json path")
+    args = parser.parse_args(argv)
+
+    lib_path = args.library or library_path()
+    if not lib_path.is_file():
+        print(json.dumps({"updated": 0, "error": "no library", "ids": [], "errors": []}))
+        return 1
+
+    library = read_library(lib_path)
+    games = library.get("games") or []
+    keys = load_keys()
+    for warning in keys.warnings:
+        print(warning, file=sys.stderr)
+    result = resolve_library(
+        games,
+        ids=list(args.ids) or None,
+        limit=None if args.ids else args.limit,
+        force=args.force,
+        offline=args.offline,
+        keys=keys,
+    )
+    art_changed = apply_art_to_library(library, result)
+    if art_changed:
+        tmp = lib_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(library, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tmp.replace(lib_path)
+
+    payload = {
+        "updated": result["updated"],
+        "ids": result["ids"],
+        "artUpdated": art_changed,
+        "errors": result["errors"],
+        "keys": keys.redacted(),
+        "offline": bool(args.offline),
+    }
+    if len(args.ids) == 1:
+        payload["meta"] = load_cached(args.ids[0]) or {}
+        payload["metaFile"] = str(meta_json_path(args.ids[0]))
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
