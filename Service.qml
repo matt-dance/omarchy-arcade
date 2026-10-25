@@ -386,6 +386,8 @@ Item {
     id: scanProcess
     stdout: StdioCollector {
       onStreamFinished: {
+        if (libraryView && typeof libraryView.reload === "function")
+          libraryView.reload()
         root.loadLibraryFromDisk()
         if (!artProcess.running) {
           artProcess.command = root.pythonCmd(root.artBin, ["--plugin-dir", root.pluginDir, "--limit", "10"])

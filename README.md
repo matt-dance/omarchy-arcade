@@ -103,7 +103,8 @@ You should see journal lines like:
 - `matt-dance.arcade: starting arcaded /usr/bin/python3 …/bin/arcaded …`
 - `matt-dance.arcade: arcaded starting pid=…`
 - `matt-dance.arcade: arcaded hello pid=…`
-- `matt-dance.arcade: overlay cache … games=5 service=yes`
+- `matt-dance.arcade: overlay cache … games=5 service=5`
+- `matt-dance.arcade: shelf=5 cache=5 service=5 resolved=5`
 - `matt-dance.arcade: showQuickMenu persist=… library=… menu=…`
 - `matt-dance.arcade: open surface=quickmenu persist=…`
 - `matt-dance.arcade: persistQuickMenu tick=… — re-summoning system menu`

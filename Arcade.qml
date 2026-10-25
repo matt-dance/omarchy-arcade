@@ -158,7 +158,7 @@ Item {
     if (!parsed.ok)
       root.localScanError = parsed.error || "library.json parse failed"
     console.warn("matt-dance.arcade: overlay cache " + root.libraryFile + " games=" + root.localGames.length
-                 + " service=" + (root.service ? "yes" : "no"))
+                 + " service=" + (root.service && root.service.games ? root.service.games.length : "no"))
     root.refreshList()
   }
 
@@ -202,6 +202,12 @@ Item {
     if (root.selectedIndex >= root.visibleGames.length)
       root.selectedIndex = Math.max(0, root.visibleGames.length - 1)
     root.updateFocused()
+    var cacheN = root.localGames ? root.localGames.length : 0
+    var serviceN = (root.service && root.service.games) ? root.service.games.length : 0
+    console.warn("matt-dance.arcade: shelf=" + root.visibleGames.length
+                 + " cache=" + cacheN
+                 + " service=" + serviceN
+                 + " resolved=" + games.length)
     var n = games.length
     var scanning = root.localScanPending || (root.service && root.service.lastAction === "scan:pending")
     if (scanning && n === 0)
@@ -1221,6 +1227,8 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         root.localScanPending = false
+        if (libraryView && typeof libraryView.reload === "function")
+          libraryView.reload()
         root.loadLibraryFromDisk()
       }
     }

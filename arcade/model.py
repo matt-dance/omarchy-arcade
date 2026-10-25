@@ -435,11 +435,39 @@ def parse_library_text(text: str | None) -> dict[str, Any]:
     }
 
 
+def _library_entries(games: list[Any] | None) -> list[Any]:
+    out: list[Any] = []
+    for game in games or []:
+        if isinstance(game, dict) and game.get("id"):
+            out.append(game)
+        elif getattr(game, "id", None):
+            out.append(game)
+    return out
+
+
 def resolved_games(service_games: list[Any] | None, local_games: list[Any] | None) -> list[Any]:
-    """Prefer an in-memory service library; fall back to the on-disk cache."""
-    if service_games:
-        return list(service_games)
-    return list(local_games or [])
+    """Union service + library.json by id. The on-disk cache always wins per id."""
+    cache = _library_entries(local_games)
+    live = _library_entries(service_games)
+    if not cache:
+        return live
+    if not live:
+        return cache
+    by_id: dict[str, Any] = {}
+    order: list[str] = []
+
+    def add(game: Any, overwrite: bool) -> None:
+        gid = str(game.get("id") if isinstance(game, dict) else game.id)
+        if gid not in by_id:
+            order.append(gid)
+        if overwrite or gid not in by_id:
+            by_id[gid] = game
+
+    for game in live:
+        add(game, False)
+    for game in cache:
+        add(game, True)
+    return [by_id[gid] for gid in order]
 
 
 def write_library(path: Path, games: list[Game], errors: list[ScanError]) -> None:

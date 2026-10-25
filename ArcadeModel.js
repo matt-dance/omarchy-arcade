@@ -36,10 +36,43 @@ function parseLibraryText(text) {
   }
 }
 
+function libraryEntries(games) {
+  var out = []
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var g = list[i]
+    if (g && g.id)
+      out.push(g)
+  }
+  return out
+}
+
 function resolvedGames(service, localGames) {
-  if (service && service.games && service.games.length)
-    return service.games
-  return localGames || []
+  // library.json is the display source of truth. A keepLoaded service can
+  // still hold a stale shorter list after a rescan (FileView miss on atomic replace).
+  var cache = libraryEntries(localGames)
+  var live = libraryEntries(service && service.games)
+  if (!cache.length)
+    return live
+  if (!live.length)
+    return cache
+  var byId = {}
+  var order = []
+  function add(g, overwrite) {
+    var id = String(g.id)
+    if (!byId[id])
+      order.push(id)
+    if (overwrite || !byId[id])
+      byId[id] = g
+  }
+  for (var i = 0; i < live.length; i++)
+    add(live[i], false)
+  for (var j = 0; j < cache.length; j++)
+    add(cache[j], true)
+  var out = []
+  for (var k = 0; k < order.length; k++)
+    out.push(byId[order[k]])
+  return out
 }
 
 function sourceLabel(source) {
