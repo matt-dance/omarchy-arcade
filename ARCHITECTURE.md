@@ -91,7 +91,17 @@ Service to daemon:
 
 - **Library cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/library.json`. It is rebuilt by `arcade-scan` and atomically replaced.
 - **Metadata cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/meta/<id>.json` plus images in `meta/<id>/`. Written by `arcade-meta`. Fresh for 14 days; stale cache is still shown while a refresh runs.
-- **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` holds favorites, hidden games, per-game options, Arcade's own last-played times and playtime, and the "Play on" preference. It survives rescans and cache wipes.
+- **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` (`arcade/state.py`) holds favorites, hidden games, the library sort order, and Arcade's own history per game id (`lastPlayed`, `seconds`, `launches`). It survives rescans and cache wipes. arcaded records a launch and, when a session ends, its playtime (sessions under 10 s and failed launches are skipped). The overlay changes favorites, hidden and sort through `bin/arcade-state`. All writes take a `flock` on `state.json.lock` and replace the file atomically. The overlay reads the file itself and merges it into the library: `lastPlayed` is the later of the store's and Arcade's, and playtime is the larger of the two. Favorites and hidden flags on any Play on… id apply to the merged card.
+
+```json
+{
+  "version": 1,
+  "favorites": ["steam:1245620"],
+  "hidden": ["desktop:battle.net-uninstall"],
+  "sort": "recent",                       // recent | az | played | source
+  "games": { "gfn:gfn-107820252": { "lastPlayed": "2026-10-20T21:14:03Z", "seconds": 7260, "launches": 4 } }
+}
+```
 - **Merging:** a `.desktop` entry whose `Exec` launches `steam://rungameid/`, `heroic://`, `lutris:rungameid/` or `itch://` is folded into that source's entry. Titles that match after normalization (including stripping a `GFN - ` prefix) across different stores collapse into one card with `alsoOn` launch payloads for the Play on… picker.
 
 ## Scanners
