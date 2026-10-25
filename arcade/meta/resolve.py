@@ -19,6 +19,11 @@ from .cache import (
 from .http import HttpClient
 from .igdb import fetch_game as fetch_igdb
 from .keys import Keys, load_keys
+from .launchers import (
+    is_launcher,
+    launcher_cache_looks_like_a_game,
+    launcher_description,
+)
 from .protondb import fetch_summary as fetch_protondb
 from .steam import fetch_appdetails, search_appid
 from .steamgriddb import fetch_art as fetch_sgdb_art
@@ -57,6 +62,8 @@ def steam_app_id_of(game: dict[str, Any]) -> int | None:
 
 
 def should_search_steam(game: dict[str, Any]) -> bool:
+    if is_launcher(game):
+        return False
     if steam_app_id_of(game):
         return False
     source = str(game.get("source") or "").casefold()
@@ -123,6 +130,18 @@ def _download_named(
     return None
 
 
+def _apply_launcher_meta(record: dict[str, Any], game: dict[str, Any]) -> None:
+    if not is_launcher(game):
+        return
+    copy = launcher_description(game)
+    if copy:
+        record["description"] = copy
+    used = list(record.get("sourcesUsed") or [])
+    if "launcher" not in used:
+        used.append("launcher")
+    record["sourcesUsed"] = used
+
+
 def _empty_record(game: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": 1,
@@ -168,6 +187,9 @@ def resolve_game(
     game_id = str(data.get("id") or "")
     cache = cache_dir if cache_dir is not None else meta_cache_dir()
     existing = load_cached(game_id, cache) if game_id else None
+    # A prior IGDB substring match can pin Warcraft II onto Battle.net.
+    if existing and is_launcher(data) and launcher_cache_looks_like_a_game(existing):
+        existing = None
     record = _empty_record(data)
     if existing:
         _merge_fill(record, existing, overwrite=True)
@@ -175,17 +197,21 @@ def resolve_game(
         record["errors"] = []
 
     if existing and not force and is_fresh(existing, now=now):
+        _apply_launcher_meta(record, data)
         _overlay_playtime(record, steam_library_roots)
         record["fresh"] = True
         return record
 
     if offline:
+        _apply_launcher_meta(record, data)
         _overlay_playtime(record, steam_library_roots)
         record["fresh"] = bool(existing and is_fresh(existing, now=now))
         return record
 
     client = http or HttpClient()
     creds = keys if keys is not None else load_keys()
+    if is_launcher(data):
+        _apply_launcher_meta(record, data)
     used: list[str] = list(record.get("sourcesUsed") or [])
     errors: list[str] = []
 
@@ -213,7 +239,7 @@ def resolve_game(
         else:
             errors.append("protondb: unavailable")
 
-    needs_igdb = creds.has_igdb and (
+    needs_igdb = creds.has_igdb and not is_launcher(data) and (
         not record.get("description") or not appid
     )
     if needs_igdb:

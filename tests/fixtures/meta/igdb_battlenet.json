@@ -1,0 +1,24 @@
+[
+  {
+    "id": 132,
+    "name": "Warcraft II: Battle.net Edition",
+    "summary": "The 1999 re-release of Warcraft II with Battle.net multiplayer.",
+    "genres": [{"id": 11, "name": "Real Time Strategy (RTS)"}],
+    "involved_companies": [
+      {
+        "company": {"name": "Blizzard Entertainment"},
+        "developer": true,
+        "publisher": true
+      }
+    ],
+    "first_release_date": 936144000,
+    "aggregated_rating": 83.0,
+    "screenshots": [{"image_id": "wc2ss0"}],
+    "cover": {"image_id": "wc2cover"}
+  },
+  {
+    "id": 133,
+    "name": "Warcraft II: Tides of Darkness",
+    "summary": "The original 1995 real-time strategy game."
+  }
+]
