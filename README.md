@@ -64,7 +64,8 @@ omarchy plugin remove matt-dance.arcade
 - **Search:** `Y` / `/` then type
 - **Settings:** `Start` / `M`
 - **Close Arcade:** `B` / Esc from the Home row
-- **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
+- **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). The same menu opens from the desktop or while Arcade is already up via `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'`. Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
+- **Play on…:** the same title from two real stores (Steam + GeForce NOW, Heroic + Steam, …) shows merged badges. Steam’s own `steam://rungameid/<appid>` / `steam_app_*` `.desktop` shortcuts collapse into the Steam entry instead of a fake **Play on Desktop** badge.
 
 ### Rescan
 
@@ -103,6 +104,10 @@ You should see journal lines like:
 - `matt-dance.arcade: arcaded starting pid=…`
 - `matt-dance.arcade: arcaded hello pid=…`
 - `matt-dance.arcade: overlay cache … games=5 service=yes`
+- `matt-dance.arcade: showQuickMenu persist=… library=… menu=…`
+- `matt-dance.arcade: open surface=quickmenu persist=…`
+- `matt-dance.arcade: persistQuickMenu tick=… — re-summoning system menu`
+- `matt-dance.arcade: QuickMenu.open already=…`
 
 `omarchy plugin disable matt-dance.arcade` then `enable` is worth trying, but **restart the shell** if arcaded still does not appear. A hot-reload after a failed QML load is not enough.
 
@@ -136,7 +141,9 @@ echo 'YOUR_API_KEY' > ~/.config/omarchy/arcade/steamgriddb.key
 omarchy-shell shell call matt-dance.arcade rescan '{}'
 ```
 
-Without a key, Arcade uses local launcher art (Steam `library_hero` when present) and themed typographic cards. Home prefers SteamGridDB hero art, then the Steam library hero, then a dimmed cover.
+Without a key, Arcade uses local launcher art (Steam `library_hero` when present) and themed typographic cards. A `.desktop` `Icon=` is treated as a small app icon, not a box-art cover: Home and Library center it at native size on a themed card instead of stretching it. With a key, `arcade-art` also searches SteamGridDB **by title** (Battle.net, World of Warcraft, …) when there is no Steam appid.
+
+Home prefers SteamGridDB hero art, then the Steam library hero, then a dimmed cover (never a tiny icon).
 
 ## Optional ROM scan
 
@@ -204,13 +211,14 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
 5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
-7. **Guide tap** — opens the system menu over a running game; B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out
+7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
 8. **System menu tools** — volume/mute/output (wpctl / omarchy-audio-*), brightness, night light, Bluetooth scan/pair, Wi-Fi picker, MangoHud, power profile, screenshot/record, do-not-disturb; missing tools stay hidden; battery shown for the machine and pads when sysfs exposes it
 9. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
 10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
-12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`
-13. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
+13. **Small icons** — Battle.net without art shows a themed initials card; World of Warcraft with only a launcher icon shows that icon centered at native size (not upscaled/blurry). With a SteamGridDB key, both should pick up real covers/heroes by name.
+14. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
 

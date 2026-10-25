@@ -228,6 +228,9 @@ class TestQmlContracts(unittest.TestCase):
         self.assertIn("detailButton", arcade)
         self.assertIn("Play", arcade)
         self.assertIn("Options", arcade)
+        self.assertIn("showQuickMenu", arcade)
+        self.assertIn("menuPinned", arcade)
+        self.assertIn("surface", arcade)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from arcade.model import Game, LaunchSpec, TrackSpec, merge_games, normalize_title
+from arcade.home import source_badges
+from arcade.model import (
+    ArtSpec,
+    Game,
+    LaunchSpec,
+    TrackSpec,
+    is_steam_desktop_wrapper,
+    merge_games,
+    normalize_title,
+    should_record_also_on,
+)
 from arcade.scanners import bottles, desktop, heroic, itch, lutris, steam
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -87,8 +97,64 @@ class TestDesktopScanner(unittest.TestCase):
         self.assertFalse(any("geforcenow" in g.id.lower() for g in games))
         self.assertNotIn("GeForce NOW", {g.title for g in games})
         self.assertIn("desktop:super-meat-boy", ids)
+        self.assertIn("desktop:battle.net", ids)
         # Bare Steam launcher skipped
         self.assertFalse(any("steam" == g.id.split(":")[-1] for g in games if g.source == "desktop"))
+        # Steam-generated / steam://rungameid .desktop files fold into Steam, not Play on Desktop
+        self.assertNotIn("desktop:steam:1203620", ids)
+        self.assertNotIn("desktop:steam_app_1203620", ids)
+        self.assertNotIn("desktop:enshrouded-steam", ids)
+        self.assertFalse(any(g.steam_app_id == 1203620 for g in games))
+        self.assertTrue(desktop.is_steam_generated_desktop(
+            {"X-Steam-Library-AppID": "1203620"},
+            "enshrouded",
+            "steam steam://rungameid/1203620",
+        ))
+
+    def test_desktop_icon_is_icon_only_except_gfn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            apps = Path(tmp)
+            icon = apps / "wow.png"
+            icon.write_bytes(b"\x89PNG\r\n\x1a\n")
+            (apps / "wow.desktop").write_text(
+                "\n".join(
+                    [
+                        "[Desktop Entry]",
+                        "Type=Application",
+                        "Name=World of Warcraft",
+                        "Exec=/opt/wow/wow",
+                        f"Icon={icon}",
+                        "Categories=Game;",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (apps / "gfn-1.desktop").write_text(
+                "\n".join(
+                    [
+                        "[Desktop Entry]",
+                        "Type=Application",
+                        "Name=GFN - Diablo IV",
+                        "Exec=bash /tmp/gfn-play.sh --cms-id 1",
+                        f"Icon={icon}",
+                        "Categories=Game;",
+                        "X-Omarchy-Plugin=matt-dance.gfn-omarchy",
+                        "X-GFN-CmsId=1",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("arcade.scanners.desktop.application_dirs", return_value=[apps]):
+                games, errors = desktop.scan()
+        self.assertEqual(errors, [])
+        wow = next(g for g in games if g.title == "World of Warcraft")
+        self.assertTrue(wow.art.icon_only)
+        self.assertTrue(wow.art.cover)
+        gfn = next(g for g in games if g.source == "gfn")
+        self.assertFalse(gfn.art.icon_only)
+        self.assertTrue(gfn.art.cover)
 
 
 class TestHeroicScanner(unittest.TestCase):
@@ -198,6 +264,10 @@ class TestMerge(unittest.TestCase):
         merged = merge_games([desk, steam_g])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].source, "steam")
+        self.assertEqual(merged[0].also_on, [])
+        self.assertTrue(is_steam_desktop_wrapper(desk))
+        self.assertFalse(is_steam_desktop_wrapper(steam_g))
+        self.assertFalse(should_record_also_on(steam_g, desk))
 
     def test_gfn_prefix_merges_with_steam(self):
         self.assertEqual(normalize_title("GFN - Enshrouded"), "enshrouded")
@@ -251,6 +321,59 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(merged[0].title, "Diablo IV")
         # Same source: no Play on… row
         self.assertEqual(merged[0].also_on, [])
+
+    def test_enshrouded_wrapper_does_not_add_play_on_desktop(self):
+        steam_g = Game(
+            id="steam:1203620",
+            title="Enshrouded",
+            source="steam",
+            steam_app_id=1203620,
+            launch=LaunchSpec(kind="uri", value="steam://rungameid/1203620"),
+            track=TrackSpec(steam_app_id=1203620),
+            dedupe_keys=["steam:1203620", "title:enshrouded"],
+        )
+        desk = Game(
+            id="desktop:steam:1203620",
+            title="Enshrouded",
+            source="desktop",
+            steam_app_id=1203620,
+            launch=LaunchSpec(kind="desktop", value="/tmp/enshrouded-steam.desktop"),
+            track=TrackSpec(steam_app_id=1203620),
+            dedupe_keys=["steam:1203620", "title:enshrouded"],
+        )
+        gfn = Game(
+            id="gfn:gfn-107820252",
+            title="Enshrouded",
+            source="gfn",
+            store="Steam",
+            runner="cloud",
+            launch=LaunchSpec(kind="desktop", value="/tmp/gfn-107820252.desktop"),
+            dedupe_keys=["gfn:107820252", "title:enshrouded"],
+        )
+        merged = merge_games([steam_g, desk, gfn])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].source, "steam")
+        self.assertEqual([e["source"] for e in merged[0].also_on], ["gfn"])
+        self.assertEqual(source_badges(merged[0].to_dict()), ["Steam", "Play on GeForce NOW"])
+
+    def test_small_icon_does_not_overwrite_cover(self):
+        keeper = Game(
+            id="steam:1",
+            title="World of Warcraft",
+            source="steam",
+            art=ArtSpec(cover="file:///cover.jpg"),
+            dedupe_keys=["title:worldofwarcraft"],
+        )
+        icon = Game(
+            id="desktop:wow",
+            title="World of Warcraft",
+            source="desktop",
+            art=ArtSpec(cover="file:///wow.png", icon="file:///wow.png", icon_only=True),
+            dedupe_keys=["title:worldofwarcraft"],
+        )
+        merged = merge_games([keeper, icon])
+        self.assertEqual(merged[0].art.cover, "file:///cover.jpg")
+        self.assertFalse(merged[0].art.icon_only)
 
 
 if __name__ == "__main__":

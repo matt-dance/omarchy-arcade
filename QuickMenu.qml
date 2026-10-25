@@ -31,6 +31,8 @@ Item {
   property string statusLine: ""
   property bool busy: false
 
+  signal dismissed()
+
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string sysBin: root.pluginDir + "/bin/arcade-sys"
   readonly property color foreground: Commons.Color.menu.text
@@ -318,6 +320,8 @@ Item {
   }
 
   function open(payloadJson) {
+    console.warn("matt-dance.arcade: QuickMenu.open already=" + root.opened
+                 + " session=" + root.sessionTitle())
     root.opened = true
     root.selectedIndex = 0
     root.view = "menu"
@@ -336,12 +340,15 @@ Item {
   }
 
   function dismiss() {
+    console.warn("matt-dance.arcade: QuickMenu.dismiss")
     root.close()
+    root.dismissed()
   }
 
   Connections {
     target: root.service
     function onQuickMenuRequested() {
+      console.warn("matt-dance.arcade: QuickMenu.quickMenuRequested opened=" + root.opened)
       if (!root.opened) root.open("{}")
       else root.dismiss()
     }

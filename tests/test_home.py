@@ -8,8 +8,10 @@ from arcade.home import (
     cover_url,
     format_last_played,
     format_playtime,
+    has_play_on,
     hero_url,
     home_shelf,
+    is_icon_only,
     play_meta,
     play_on_choices,
     source_badges,
@@ -50,6 +52,42 @@ class TestBadgesAndPlayOn(unittest.TestCase):
         game = {"id": "heroic:gog:1", "source": "heroic", "store": "gog", "alsoOn": []}
         self.assertEqual(source_badges(game), ["Heroic", "GOG"])
 
+    def test_steam_desktop_wrapper_hidden_from_play_on(self):
+        game = {
+            "id": "steam:1203620",
+            "source": "steam",
+            "alsoOn": [
+                {
+                    "id": "desktop:steam:1203620",
+                    "source": "desktop",
+                    "launch": {"kind": "desktop", "value": "/tmp/enshrouded.desktop"},
+                    "track": {"steamAppId": 1203620},
+                },
+                {
+                    "id": "gfn:gfn-107820252",
+                    "source": "gfn",
+                    "launch": {"kind": "desktop", "value": "/tmp/gfn.desktop"},
+                },
+            ],
+        }
+        self.assertEqual(source_badges(game), ["Steam", "Play on GeForce NOW"])
+        choices = play_on_choices(game)
+        self.assertEqual([c["source"] for c in choices], ["steam", "gfn"])
+        self.assertTrue(has_play_on(game))
+        wrapper_only = {
+            "id": "steam:1",
+            "source": "steam",
+            "alsoOn": [
+                {
+                    "id": "desktop:foo",
+                    "source": "desktop",
+                    "launch": {"kind": "uri", "value": "steam://rungameid/1"},
+                }
+            ],
+        }
+        self.assertEqual(source_badges(wrapper_only), ["Steam"])
+        self.assertFalse(has_play_on(wrapper_only))
+
     def test_source_label_case(self):
         self.assertEqual(source_label("Steam"), "Steam")
         self.assertEqual(source_label("gfn"), "GeForce NOW")
@@ -73,6 +111,11 @@ class TestPlayMeta(unittest.TestCase):
         self.assertEqual(hero_url(game), "file:///h.jpg")
         self.assertEqual(cover_url(game), "file:///c.jpg")
         self.assertEqual(hero_url({}), "")
+
+    def test_icon_only_flag(self):
+        self.assertTrue(is_icon_only({"art": {"iconOnly": True, "cover": "file:///i.png"}}))
+        self.assertFalse(is_icon_only({"art": {"cover": "file:///c.jpg"}}))
+        self.assertFalse(is_icon_only({}))
 
 
 if __name__ == "__main__":

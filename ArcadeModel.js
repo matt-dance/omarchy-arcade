@@ -125,13 +125,33 @@ function sourceBadges(game) {
   var extras = game.alsoOn || []
   for (var i = 0; i < extras.length; i++) {
     var extra = extras[i]
-    if (!extra || typeof extra === "string")
+    if (!extra || typeof extra === "string" || alsoOnIsWrapper(extra))
       continue
     var label = sourceLabel(extra.source)
     if (label && !seen[label])
       add("Play on " + label)
   }
   return badges
+}
+
+function alsoOnIsWrapper(extra) {
+  if (!extra) return false
+  var extraId = String(extra.id || "")
+  if (extraId.indexOf("desktop:steam:") === 0 || extraId.indexOf("steam_app_") === 0)
+    return true
+  var launch = extra.launch || {}
+  var value = launch.value
+  var text = typeof value === "string" ? value : (value && value.join ? value.join(" ") : "")
+  if (String(text).indexOf("steam://rungameid/") !== -1)
+    return true
+  var track = extra.track || {}
+  if (String(extra.source || "") === "desktop" && track.steamAppId)
+    return true
+  return false
+}
+
+function hasPlayOn(game) {
+  return playOnChoices(game).length > 1
 }
 
 function formatPlaytime(minutes) {
@@ -182,6 +202,20 @@ function coverUrl(game) {
   return ""
 }
 
+function isIconOnly(game) {
+  return !!(game && game.art && game.art.iconOnly)
+}
+
+function isSmallArt(game, implicitW, implicitH) {
+  if (isIconOnly(game))
+    return true
+  var w = Number(implicitW) || 0
+  var h = Number(implicitH) || 0
+  if (w <= 0 && h <= 0)
+    return false
+  return Math.max(w, h) < 256
+}
+
 function recentGames(games, limit) {
   var copy = games.slice()
   copy.sort(function(a, b) {
@@ -230,7 +264,7 @@ function playOnChoices(game) {
   var extra = game.alsoOn || []
   for (var i = 0; i < extra.length; i++) {
     var a = extra[i]
-    if (!a || typeof a === "string")
+    if (!a || typeof a === "string" || alsoOnIsWrapper(a))
       continue
     out.push({
       id: a.id || game.id,

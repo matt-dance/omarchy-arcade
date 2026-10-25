@@ -73,6 +73,8 @@ def play_on_choices(game: dict[str, Any] | None) -> list[dict[str, Any]]:
     for extra in game.get("alsoOn") or []:
         if not extra or isinstance(extra, str):
             continue
+        if _is_wrapper_also_on(extra):
+            continue
         out.append(
             {
                 "id": extra.get("id") or game.get("id"),
@@ -107,10 +109,33 @@ def source_badges(game: dict[str, Any] | None) -> list[str]:
     for extra in game.get("alsoOn") or []:
         if not extra or isinstance(extra, str):
             continue
+        if _is_wrapper_also_on(extra):
+            continue
         label = source_label(extra.get("source"))
         if label and label not in seen:
             add(f"Play on {label}")
     return badges
+
+
+def _is_wrapper_also_on(extra: dict[str, Any]) -> bool:
+    """Hide Steam-generated .desktop wrappers from Play on… badges."""
+    source = str(extra.get("source") or "")
+    extra_id = str(extra.get("id") or "")
+    if extra_id.startswith("desktop:steam:") or extra_id.startswith("steam_app_"):
+        return True
+    launch = extra.get("launch") or {}
+    value = launch.get("value") if isinstance(launch, dict) else ""
+    text = value if isinstance(value, str) else " ".join(str(p) for p in (value or []))
+    if "steam://rungameid/" in text:
+        return True
+    track = extra.get("track") or {}
+    if source == "desktop" and isinstance(track, dict) and track.get("steamAppId"):
+        return True
+    return source == "desktop" and "steam://rungameid/" in extra_id
+
+
+def has_play_on(game: dict[str, Any] | None) -> bool:
+    return len(play_on_choices(game)) > 1
 
 
 def format_playtime(minutes: Any) -> str:
@@ -177,3 +202,10 @@ def cover_url(game: dict[str, Any] | None) -> str:
     if isinstance(art, dict) and art.get("cover"):
         return str(art["cover"])
     return ""
+
+
+def is_icon_only(game: dict[str, Any] | None) -> bool:
+    if not game:
+        return False
+    art = game.get("art") or {}
+    return bool(isinstance(art, dict) and art.get("iconOnly"))

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Enshrouded
+Exec=steam steam://rungameid/1203620
+Icon=steam_icon_1203620
+Categories=Game;
+StartupWMClass=steam_app_1203620
+X-Steam-Library-AppID=1203620

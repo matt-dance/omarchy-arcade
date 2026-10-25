@@ -95,9 +95,18 @@ class ArtSpec:
     hero: str | None = None
     logo: str | None = None
     icon: str | None = None
+    icon_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = {
+            "cover": self.cover,
+            "hero": self.hero,
+            "logo": self.logo,
+            "icon": self.icon,
+        }
+        if self.icon_only:
+            d["iconOnly"] = True
+        return d
 
 
 @dataclass
@@ -190,6 +199,52 @@ def _has_also_on(entries: list[Any], game_id: str) -> bool:
     return any(_also_on_id(e) == game_id for e in entries)
 
 
+def _launch_text(game: Game) -> str:
+    if not game.launch:
+        return ""
+    value = game.launch.value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(p) for p in value)
+    return str(value)
+
+
+def is_steam_desktop_wrapper(game: Game) -> bool:
+    """True for Steam's own .desktop shortcuts (steam://rungameid or generated)."""
+    if game.source == "steam":
+        return False
+    if game.steam_app_id and game.source == "desktop":
+        return True
+    text = _launch_text(game).casefold()
+    if "steam://rungameid/" in text:
+        return True
+    gid = (game.id or "").casefold()
+    return gid.startswith("desktop:steam:") or gid.startswith("steam_app_")
+
+
+def should_record_also_on(keeper: Game, other: Game) -> bool:
+    """Play on… only for real alternate stores, not Steam .desktop wrappers."""
+    if keeper.source == other.source:
+        return False
+    if is_steam_desktop_wrapper(other) or is_steam_desktop_wrapper(keeper):
+        return False
+    if keeper.steam_app_id and other.steam_app_id and keeper.steam_app_id == other.steam_app_id:
+        if "desktop" in {keeper.source, other.source}:
+            return False
+    return True
+
+
+def _absorb_art(dst: Game, src: Game) -> None:
+    if src.art.cover and (not dst.art.cover or (dst.art.icon_only and not src.art.icon_only)):
+        dst.art.cover = src.art.cover
+        dst.art.icon_only = bool(src.art.icon_only)
+    if not dst.art.hero and src.art.hero:
+        dst.art.hero = src.art.hero
+    if not dst.art.icon and src.art.icon:
+        dst.art.icon = src.art.icon
+
+
 def merge_games(games: list[Game]) -> list[Game]:
     """Collapse duplicates. Prefer richer sources over bare .desktop wrappers."""
     source_rank = {
@@ -223,12 +278,9 @@ def merge_games(games: list[Game]) -> list[Game]:
 
         # Prefer non-desktop over desktop wrappers; keep higher-ranked source.
         if source_rank.get(game.source, 99) < source_rank.get(primary.source, 99):
-            if primary.source != game.source and not _has_also_on(game.also_on, primary.id):
+            if should_record_also_on(game, primary) and not _has_also_on(game.also_on, primary.id):
                 game.also_on = [*game.also_on, also_on_payload(primary)]
-            if not game.art.cover and primary.art.cover:
-                game.art.cover = primary.art.cover
-            if not game.art.hero and primary.art.hero:
-                game.art.hero = primary.art.hero
+            _absorb_art(game, primary)
             if game.playtime_minutes is None and primary.playtime_minutes is not None:
                 game.playtime_minutes = primary.playtime_minutes
             if not game.last_played and primary.last_played:
@@ -241,13 +293,9 @@ def merge_games(games: list[Game]) -> list[Game]:
                     order[i] = game.dedupe_keys[0]
                     break
         else:
-            if game.source != primary.source and not _has_also_on(primary.also_on, game.id):
+            if should_record_also_on(primary, game) and not _has_also_on(primary.also_on, game.id):
                 primary.also_on = [*primary.also_on, also_on_payload(game)]
-            # Absorb art / playtime when missing
-            if not primary.art.cover and game.art.cover:
-                primary.art.cover = game.art.cover
-            if not primary.art.hero and game.art.hero:
-                primary.art.hero = game.art.hero
+            _absorb_art(primary, game)
             if primary.playtime_minutes is None and game.playtime_minutes is not None:
                 primary.playtime_minutes = game.playtime_minutes
             if not primary.last_played and game.last_played:

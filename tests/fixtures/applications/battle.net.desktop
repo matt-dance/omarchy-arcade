@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Battle.net
+Exec=omarchy-launch-battlenet
+Categories=Game;

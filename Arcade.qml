@@ -41,6 +41,8 @@ Item {
   property string focusZone: "shelf"   // shelf | details
   property int detailButton: 0         // 0 Play, 1 Options
   property var focusedGame: null
+  property bool menuPinned: false
+  property bool libraryBeneathMenu: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -97,10 +99,12 @@ Item {
       payload = {}
     }
     if (payload && payload.surface === "quickmenu") {
+      console.warn("matt-dance.arcade: open surface=quickmenu persist=" + !!payload.persist
+                   + " library=" + root.opened)
       root.showQuickMenu(payloadJson)
       return
     }
-    if (quickMenu && quickMenu.opened)
+    if (quickMenu && quickMenu.opened && !root.menuPinned)
       quickMenu.close()
     root.playOnOpen = false
     root.opened = true
@@ -119,11 +123,19 @@ Item {
 
   function close() {
     root.opened = false
+    if (root.menuPinned) {
+      console.warn("matt-dance.arcade: close library; system menu stays pinned")
+      return
+    }
     if (root.service && typeof root.service.setUiMode === "function")
       root.service.setUiMode(false)
   }
 
   function dismiss() {
+    if (root.menuPinned && quickMenu && quickMenu.opened) {
+      console.warn("matt-dance.arcade: dismiss skipped; system menu is pinned")
+      return
+    }
     root.close()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide(Model.pluginId(root.manifest))
@@ -282,12 +294,63 @@ Item {
     return "ok"
   }
 
+  function parsePayload(payloadJson) {
+    try {
+      if (payloadJson && String(payloadJson).length)
+        return JSON.parse(payloadJson)
+    } catch (e) {}
+    return {}
+  }
+
   function showQuickMenu(payloadJson) {
-    if (quickMenu) {
-      quickMenu.open(payloadJson || "{}")
-      return "ok"
+    var payload = root.parsePayload(payloadJson)
+    var persist = !!(payload && payload.persist)
+    console.warn("matt-dance.arcade: showQuickMenu persist=" + persist
+                 + " library=" + root.opened
+                 + " menu=" + (quickMenu && quickMenu.opened ? "open" : "closed")
+                 + " service=" + (root.service ? "yes" : "no"))
+    if (root.service) {
+      root.service.quickMenuWanted = true
+      if (typeof root.service.setUiMode === "function")
+        root.service.setUiMode(true)
     }
-    return "unknown"
+    if (!quickMenu) {
+      console.warn("matt-dance.arcade: showQuickMenu failed — QuickMenu child missing")
+      return "unknown"
+    }
+    root.menuPinned = true
+    if (root.opened)
+      root.libraryBeneathMenu = true
+    quickMenu.open(payloadJson || "{}")
+    console.warn("matt-dance.arcade: showQuickMenu opened menuPinned=true libraryBeneath="
+                 + root.libraryBeneathMenu)
+    // Host `shell call` often unmaps the overlay after the method returns.
+    // Re-summon as the menu surface so the plugin stays mapped.
+    if (!persist && root.service && typeof root.service.persistQuickMenu === "function")
+      root.service.persistQuickMenu()
+    else if (!persist) {
+      menuPersistTimer.ticks = 0
+      menuPersistTimer.restart()
+    }
+    return "ok"
+  }
+
+  function onQuickMenuDismissed() {
+    console.warn("matt-dance.arcade: system menu dismissed libraryBeneath=" + root.libraryBeneathMenu
+                 + " library=" + root.opened)
+    root.menuPinned = false
+    if (root.service)
+      root.service.quickMenuWanted = false
+    if (root.libraryBeneathMenu && root.opened) {
+      root.libraryBeneathMenu = false
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      return
+    }
+    root.libraryBeneathMenu = false
+    if (!root.opened && root.shell && typeof root.shell.hide === "function")
+      root.shell.hide(Model.pluginId(root.manifest))
+    if (root.service && typeof root.service.setUiMode === "function")
+      root.service.setUiMode(false)
   }
 
   function status() {
@@ -297,6 +360,8 @@ Item {
   }
 
   function handleIntent(name) {
+    if (quickMenu && quickMenu.opened)
+      return
     if (!root.opened) return
     if (root.playOnOpen) {
       if (name === "accept") root.launchPlayOnChoice()
@@ -356,6 +421,7 @@ Item {
     target: root.service
     function onLibraryChanged() { root.refreshList() }
     function onNav(dir, repeat) {
+      if (quickMenu && quickMenu.opened) return
       if (!root.opened) return
       if (root.playOnOpen) {
         var n = root.playOnChoices.length
@@ -553,9 +619,9 @@ Item {
                   source: Model.coverUrl(modelData)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
-                  visible: status === Image.Ready
-                  sourceSize.width: root.homeCardW
-                  sourceSize.height: root.homeCardH
+                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
+                  sourceSize.width: Model.isIconOnly(modelData) ? 0 : root.homeCardW
+                  sourceSize.height: Model.isIconOnly(modelData) ? 0 : root.homeCardH
                 }
 
                 Rectangle {
@@ -563,8 +629,18 @@ Item {
                   anchors.margins: 3
                   visible: !homeCover.visible
                   color: "transparent"
+                  Image {
+                    id: homeSmallIcon
+                    anchors.centerIn: parent
+                    source: Model.coverUrl(modelData)
+                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                    asynchronous: true
+                    fillMode: Image.Pad
+                    cache: true
+                  }
                   Column {
                     anchors.centerIn: parent
+                    visible: homeSmallIcon.status !== Image.Ready
                     spacing: Style.spacing.sm
                     width: parent.width - Style.spacing.panelPadding
                     Text {
@@ -600,7 +676,7 @@ Item {
                   Text {
                     id: homeBadge
                     anchors.centerIn: parent
-                    text: (modelData.alsoOn && modelData.alsoOn.length)
+                    text: Model.hasPlayOn(modelData)
                           ? "Play on…"
                           : Model.sourceLabel(modelData.source)
                     color: root.foreground
@@ -647,6 +723,7 @@ Item {
               fillMode: Image.PreserveAspectCrop
               asynchronous: true
               visible: heroArt.status !== Image.Ready && status === Image.Ready
+                       && !Model.isSmallArt(root.focusedGame)
               opacity: 0.22
               scale: 1.18
             }
@@ -818,12 +895,12 @@ Item {
                 id: cover
                 anchors.fill: parent
                 anchors.margins: 2
-                source: (modelData.art && modelData.art.cover) ? modelData.art.cover : ""
+                source: Model.coverUrl(modelData)
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
-                visible: status === Image.Ready
-                sourceSize.width: root.cardW
-                sourceSize.height: root.cardH
+                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
+                sourceSize.width: Model.isIconOnly(modelData) ? 0 : root.cardW
+                sourceSize.height: Model.isIconOnly(modelData) ? 0 : root.cardH
               }
 
               Rectangle {
@@ -831,8 +908,18 @@ Item {
                 anchors.margins: 2
                 visible: !cover.visible
                 color: "transparent"
+                Image {
+                  id: librarySmallIcon
+                  anchors.centerIn: parent
+                  source: Model.coverUrl(modelData)
+                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                  asynchronous: true
+                  fillMode: Image.Pad
+                  cache: true
+                }
                 Column {
                   anchors.centerIn: parent
+                  visible: librarySmallIcon.status !== Image.Ready
                   spacing: Style.spacing.sm
                   width: parent.width - Style.spacing.panelPadding
                   Text {
@@ -869,7 +956,7 @@ Item {
                 Text {
                   id: badgeLabel
                   anchors.centerIn: parent
-                  text: (modelData.alsoOn && modelData.alsoOn.length)
+                  text: Model.hasPlayOn(modelData)
                         ? "Play on…"
                         : Model.sourceLabel(modelData.source)
                   color: root.foreground
@@ -1088,12 +1175,37 @@ Item {
     }
   }
 
+  Timer {
+    id: menuPersistTimer
+    interval: 160
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      if (!root.menuPinned || ticks >= 2) {
+        console.warn("matt-dance.arcade: showQuickMenu persist stop pinned="
+                     + root.menuPinned + " ticks=" + ticks)
+        stop()
+        ticks = 0
+        return
+      }
+      ticks += 1
+      console.warn("matt-dance.arcade: showQuickMenu persist tick=" + ticks
+                   + " menu=" + (quickMenu && quickMenu.opened ? "open" : "closed"))
+      Quickshell.execDetached([
+        "omarchy-shell", "shell", "summon",
+        Model.pluginId(root.manifest),
+        '{"surface":"quickmenu","persist":true}'
+      ])
+    }
+  }
+
   QuickMenu {
     id: quickMenu
     shell: root.shell
     manifest: root.manifest
     pluginRegistry: root.pluginRegistry
     service: root.service
+    onDismissed: root.onQuickMenuDismissed()
   }
 
   FileView {

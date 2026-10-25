@@ -62,6 +62,37 @@ _SKIP_EXEC_PREFIXES = (
 )
 
 
+def _steam_app_id_from_desktop(fields: dict[str, str], exec_line: str) -> int | None:
+    for key in ("X-Steam-Library-AppID", "X-Steam-AppID", "X-GNOME-SteamAppID"):
+        raw = fields.get(key)
+        if not raw:
+            continue
+        try:
+            return int(str(raw).strip())
+        except ValueError:
+            continue
+    if "steam://rungameid/" in exec_line:
+        try:
+            return int(exec_line.split("steam://rungameid/", 1)[1].split()[0].strip("\"'"))
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def is_steam_generated_desktop(fields: dict[str, str], stem: str, exec_line: str) -> bool:
+    """Steam writes per-game .desktop shortcuts that duplicate the Steam scanner."""
+    if stem.startswith("steam_app_"):
+        return True
+    if fields.get("X-Steam-Library-AppID") or fields.get("X-Steam-AppID"):
+        return True
+    wm = fields.get("StartupWMClass", "")
+    if wm.startswith("steam_app_"):
+        return True
+    if "steam://rungameid/" in exec_line:
+        return True
+    return False
+
+
 def _parse_desktop(path: Path) -> dict[str, str] | None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -215,13 +246,10 @@ def scan() -> tuple[list[Game], list[ScanError]]:
                 # Bare Steam launcher or steam://open — not a game
                 if "rungameid" not in exec_line.lower():
                     continue
-            # Fold steam://rungameid desktop wrappers into steam source via dedupe
-            steam_app_id = None
-            if "steam://rungameid/" in exec_line:
-                try:
-                    steam_app_id = int(exec_line.split("steam://rungameid/")[1].split()[0].strip("\"'"))
-                except (IndexError, ValueError):
-                    steam_app_id = None
+            if is_steam_generated_desktop(fields, stem, exec_line):
+                # Steam's own steam://rungameid shortcuts — not a Play on Desktop source.
+                continue
+            steam_app_id = _steam_app_id_from_desktop(fields, exec_line)
             title = fields["Name"]
             # Strip "GFN - " prefix for display but keep identity
             store = None
@@ -249,6 +277,9 @@ def scan() -> tuple[list[Game], list[ScanError]]:
             seen_ids.add(gid)
 
             icon = _icon_uri(fields.get("Icon", ""))
+            # .desktop Icon= is almost always a 32–128px theme/app icon, not cover art.
+            # GFN plugin launchers store box art in Icon=; keep those as covers.
+            icon_only = bool(icon) and source != "gfn"
             dedupe = [f"title:{normalize_title(title)}"]
             if steam_app_id is not None:
                 dedupe.insert(0, f"steam:{steam_app_id}")
@@ -269,7 +300,7 @@ def scan() -> tuple[list[Game], list[ScanError]]:
                         steam_app_id=steam_app_id,
                         handoff=source in ("gfn", "webapp") or steam_app_id is not None,
                     ),
-                    art=ArtSpec(cover=icon, icon=icon),
+                    art=ArtSpec(cover=icon, icon=icon, icon_only=icon_only),
                     description=fields.get("Comment"),
                     dedupe_keys=dedupe,
                 )

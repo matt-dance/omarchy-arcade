@@ -203,21 +203,46 @@ Item {
     ])
   }
 
+  function summonQuickMenu(persist) {
+    var payload = persist ? '{"surface":"quickmenu","persist":true}' : '{"surface":"quickmenu"}'
+    root.log("summonQuickMenu persist=" + !!persist + " session=" + root.sessionState)
+    Quickshell.execDetached([
+      "omarchy-shell", "shell", "summon", Model.pluginId(root.manifest), payload
+    ])
+  }
+
+  function persistQuickMenu() {
+    root.quickMenuWanted = true
+    menuPersistTimer.ticks = 0
+    menuPersistTimer.restart()
+    root.log("persistQuickMenu armed ticks=0 session=" + root.sessionState)
+  }
+
   function openQuickMenu() {
+    root.log("openQuickMenu session=" + root.sessionState + " wanted=" + root.quickMenuWanted)
     if (root.sessionState === "running" || root.sessionState === "starting") {
+      if (root.quickMenuWanted) {
+        root.log("openQuickMenu second tap — requesting dismiss")
+        root.quickMenuWanted = false
+        menuPersistTimer.stop()
+        root.quickMenuRequested()
+        return
+      }
       root.quickMenuWanted = true
       root.quickMenuRequested()
-      Quickshell.execDetached([
-        "omarchy-shell", "shell", "call", Model.pluginId(root.manifest), "showQuickMenu", "{}"
-      ])
+      root.summonQuickMenu(false)
+      // Host hide after a call/summon can unmap Arcade.qml and take the menu with it.
+      root.persistQuickMenu()
     } else {
       root.toggleArcade()
     }
   }
 
   function showQuickMenu(payloadJson) {
+    root.log("service showQuickMenu session=" + root.sessionState)
     root.quickMenuWanted = true
     root.quickMenuRequested()
+    root.persistQuickMenu()
     return "ok"
   }
 
@@ -417,6 +442,24 @@ Item {
     onTriggered: {
       if (!daemon.running)
         root.startDaemon()
+    }
+  }
+
+  Timer {
+    id: menuPersistTimer
+    interval: 160
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      if (!root.quickMenuWanted || ticks >= 2) {
+        root.log("persistQuickMenu stop wanted=" + root.quickMenuWanted + " ticks=" + ticks)
+        stop()
+        ticks = 0
+        return
+      }
+      ticks += 1
+      root.log("persistQuickMenu tick=" + ticks + " — re-summoning system menu")
+      root.summonQuickMenu(true)
     }
   }
 }

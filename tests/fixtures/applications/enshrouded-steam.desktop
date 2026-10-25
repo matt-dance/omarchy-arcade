@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Enshrouded
+Comment=Play Enshrouded on Steam
+Exec=steam steam://rungameid/1203620
+Icon=enshrouded
+Categories=Game;
