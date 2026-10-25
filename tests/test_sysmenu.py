@@ -240,6 +240,7 @@ class TestQmlContracts(unittest.TestCase):
         self.assertIn('"/usr/bin/python3", "-u"', qml)
         self.assertIn("sysmenu payload", qml)
         self.assertIn('label: "Power"', qml)
+        self.assertIn("if (!text || !String(text).trim())", qml)
 
 
 class TestResolveBin(unittest.TestCase):

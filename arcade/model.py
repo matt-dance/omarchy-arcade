@@ -125,7 +125,8 @@ def path_from_uri(uri: str | None) -> Path | None:
 def image_max_edge(path: Path) -> int | None:
     """Largest pixel edge of a PNG/GIF/JPEG/ICO/WebP, or None if unknown."""
     try:
-        data = path.read_bytes()
+        with path.open("rb") as fh:
+            data = fh.read(65536)
     except OSError:
         return None
     if len(data) < 24:
@@ -176,24 +177,38 @@ def image_max_edge(path: Path) -> int | None:
 
 
 def stamp_icon_only(art: ArtSpec) -> ArtSpec:
-    """Mark tiny launcher icons so QML will not stretch them as covers."""
+    """Mark tiny launcher icons so QML will not stretch them as covers.
+
+    Only the pixel size (or an SVG) counts. GFN box art is often stored as
+    Icon= under ~/.local/share/icons/gfn and must stay a cropped cover.
+    """
     if art.icon_only or not art.cover:
         return art
-    cover = str(art.cover)
-    if art.icon and cover == str(art.icon) and not art.hero and cover.startswith("file:"):
-        art.icon_only = True
+    try:
+        path = path_from_uri(str(art.cover))
+        if path is None:
+            return art
+        if path.suffix.casefold() == ".svg":
+            art.icon_only = True
+            return art
+        edge = image_max_edge(path)
+        if edge is not None and edge < 256:
+            art.icon_only = True
+    except Exception:
         return art
-    path = path_from_uri(cover)
-    if path is None:
-        return art
-    text = str(path).casefold()
-    if path.suffix.casefold() == ".svg" or "/icons/" in text or "/.icons/" in text:
-        art.icon_only = True
-        return art
-    edge = image_max_edge(path)
-    if edge is not None and edge < 256:
-        art.icon_only = True
     return art
+
+
+def art_from_dict(data: dict[str, Any] | None) -> ArtSpec:
+    """Accept both Python and library.json keys (`iconOnly`)."""
+    raw = data or {}
+    return ArtSpec(
+        cover=raw.get("cover"),
+        hero=raw.get("hero"),
+        logo=raw.get("logo"),
+        icon=raw.get("icon"),
+        icon_only=bool(raw.get("iconOnly") or raw.get("icon_only")),
+    )
 
 
 @dataclass

@@ -34,6 +34,14 @@ class TestHomeShelf(unittest.TestCase):
         self.assertEqual(home_shelf(None), [])
         self.assertEqual(home_shelf([]), [])
 
+    def test_icon_only_games_stay_on_the_shelf(self):
+        games = [
+            {"id": "desktop:wow", "title": "World of Warcraft", "art": {"iconOnly": True, "cover": "file:///wow.png"}},
+            {"id": "steam:1", "title": "Enshrouded", "art": {"cover": "file:///c.jpg"}},
+        ]
+        shelf = home_shelf(games)
+        self.assertEqual({g["id"] for g in shelf}, {"desktop:wow", "steam:1"})
+
 
 class TestBadgesAndPlayOn(unittest.TestCase):
     def test_source_and_play_on_badges(self):

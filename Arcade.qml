@@ -604,6 +604,7 @@ Item {
                 height: root.homeCardH
                 anchors.centerIn: parent
                 radius: root.cornerRadius
+                clip: true
                 color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
                 border.width: index === root.selectedIndex ? Math.max(3, Style.space(3)) : 1
                 border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
@@ -616,10 +617,10 @@ Item {
                   id: homeCover
                   anchors.fill: parent
                   anchors.margins: 3
+                  clip: true
                   source: Model.coverUrl(modelData)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
-                  // Do not set sourceSize — it upscales tiny icons before we can measure them.
                   visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
                 }
 
@@ -722,7 +723,7 @@ Item {
               fillMode: Image.PreserveAspectCrop
               asynchronous: true
               visible: heroArt.status !== Image.Ready && status === Image.Ready
-                       && !Model.isSmallArt(root.focusedGame)
+                       && !Model.isSmallArt(root.focusedGame, implicitWidth, implicitHeight)
               opacity: 0.22
               scale: 1.18
             }
@@ -885,6 +886,7 @@ Item {
               height: root.cardH
               anchors.centerIn: parent
               radius: root.cornerRadius
+              clip: true
               color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
               border.width: index === root.selectedIndex ? Math.max(2, Style.space(2)) : 1
               border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
@@ -894,6 +896,7 @@ Item {
                 id: cover
                 anchors.fill: parent
                 anchors.margins: 2
+                clip: true
                 source: Model.coverUrl(modelData)
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true

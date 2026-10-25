@@ -283,7 +283,7 @@ class ArcadeDaemon:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return
-        from .model import ArtSpec, LaunchSpec, TrackSpec
+        from .model import LaunchSpec, TrackSpec, art_from_dict
 
         self._games_by_id.clear()
         for g in data.get("games") or []:
@@ -310,7 +310,7 @@ class ArcadeDaemon:
                     steam_app_id=track_d.get("steamAppId"),
                     handoff=bool(track_d.get("handoff")),
                 ),
-                art=ArtSpec(**(g.get("art") or {})),
+                art=art_from_dict(g.get("art") or {}),
                 steam_app_id=g.get("steamAppId"),
                 playtime_minutes=g.get("playtimeMinutes"),
                 last_played=g.get("lastPlayed"),

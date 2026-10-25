@@ -54,11 +54,21 @@ class TestIconOnlyInference(unittest.TestCase):
             stamp_icon_only(box)
             self.assertFalse(box.icon_only)
 
-    def test_matching_icon_cover_is_icon_only(self):
+    def test_gfn_box_art_in_icons_dir_is_not_icon_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            icons = Path(tmp) / "icons" / "gfn"
+            icons.mkdir(parents=True)
+            cover = icons / "gfn-107820252.png"
+            cover.write_bytes(_png(600, 900))
+            art = ArtSpec(cover=cover.as_uri(), icon=cover.as_uri())
+            stamp_icon_only(art)
+            self.assertFalse(art.icon_only)
+        self.assertEqual(path_from_uri("file:///tmp/foo%20bar.png"), Path("/tmp/foo bar.png"))
+
+    def test_unreadable_cover_is_left_alone(self):
         art = ArtSpec(cover="file:///tmp/wow.png", icon="file:///tmp/wow.png")
         stamp_icon_only(art)
-        self.assertTrue(art.icon_only)
-        self.assertEqual(path_from_uri("file:///tmp/foo%20bar.png"), Path("/tmp/foo bar.png"))
+        self.assertFalse(art.icon_only)
 
 
 class TestSteamGridDB(unittest.TestCase):

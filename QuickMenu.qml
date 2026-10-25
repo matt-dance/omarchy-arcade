@@ -149,6 +149,8 @@ Item {
   }
 
   function applyMenuPayload(text) {
+    if (!text || !String(text).trim())
+      return
     try {
       var data = JSON.parse(text)
       root.status = data.status || {}
@@ -702,6 +704,8 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         root.busy = false
+        if (!text || !String(text).trim())
+          return
         try {
           var data = JSON.parse(text)
           if (data.discovered)

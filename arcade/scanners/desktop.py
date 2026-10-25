@@ -179,7 +179,7 @@ def _is_game(fields: dict[str, str], stem: str = "") -> str | None:
     name = fields.get("Name", "").lower()
     if _is_gfn_client(fields, stem) or name in _GFN_CLIENT_NAMES:
         return None
-    if any(k in name for k in ("xbox cloud", "minecraft")):
+    if any(k in name for k in ("xbox cloud", "minecraft", "warcraft", "battle.net", "battlenet")):
         return "webapp" if "omarchy-launch-webapp" in exec_line else "desktop"
     return None
 

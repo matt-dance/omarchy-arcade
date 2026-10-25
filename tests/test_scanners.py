@@ -15,10 +15,12 @@ from arcade.model import (
     Game,
     LaunchSpec,
     TrackSpec,
+    art_from_dict,
     is_steam_desktop_wrapper,
     merge_games,
     normalize_title,
     should_record_also_on,
+    write_library,
 )
 from arcade.scanners import bottles, desktop, heroic, itch, lutris, steam
 
@@ -374,6 +376,35 @@ class TestMerge(unittest.TestCase):
         merged = merge_games([keeper, icon])
         self.assertEqual(merged[0].art.cover, "file:///cover.jpg")
         self.assertFalse(merged[0].art.icon_only)
+
+    def test_icon_only_game_survives_merge_and_write(self):
+        wow = Game(
+            id="desktop:wow",
+            title="World of Warcraft",
+            source="desktop",
+            art=ArtSpec(cover="file:///wow.png", icon="file:///wow.png", icon_only=True),
+            launch=LaunchSpec(kind="desktop", value="/tmp/wow.desktop"),
+            dedupe_keys=["title:worldofwarcraft"],
+        )
+        battle = Game(
+            id="desktop:battle.net",
+            title="Battle.net",
+            source="desktop",
+            launch=LaunchSpec(kind="desktop", value="/tmp/battle.net.desktop"),
+            dedupe_keys=["title:battlenet"],
+        )
+        merged = merge_games([wow, battle])
+        self.assertEqual({g.id for g in merged}, {"desktop:wow", "desktop:battle.net"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "library.json"
+            write_library(path, merged, [])
+            data = json.loads(path.read_text(encoding="utf-8"))
+        ids = {g["id"] for g in data["games"]}
+        self.assertEqual(ids, {"desktop:wow", "desktop:battle.net"})
+        wow_art = next(g["art"] for g in data["games"] if g["id"] == "desktop:wow")
+        self.assertTrue(wow_art.get("iconOnly"))
+        loaded = art_from_dict(wow_art)
+        self.assertTrue(loaded.icon_only)
 
 
 if __name__ == "__main__":

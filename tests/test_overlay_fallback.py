@@ -61,6 +61,7 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("function alsoOnIsWrapper", js)
         self.assertIn("function isIconOnly", js)
         self.assertIn("function isSmallArt", js)
+        self.assertNotIn("cover === game.art.icon", js)
         self.assertIn("function hasPlayOn", js)
         self.assertIn("homeRow", qml)
         self.assertIn("focusZone", qml)
@@ -70,7 +71,8 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("persistQuickMenu", qml)
         self.assertIn("Image.Pad", qml)
         self.assertIn("isSmallArt", qml)
-        self.assertIn("Do not set sourceSize", qml)
+        self.assertIn("clip: true", qml)
+        self.assertIn("PreserveAspectCrop", qml)
 
     def test_show_quick_menu_logs_and_persists(self):
         qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
@@ -87,6 +89,7 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("re-summoning system menu", service)
         self.assertIn("QuickMenu.open", menu)
         self.assertIn("signal dismissed", menu)
+        self.assertIn("if (!text || !String(text).trim())", menu)
 
     def test_service_logs_and_starts_arcaded_via_python(self):
         qml = (ROOT / "Service.qml").read_text(encoding="utf-8")

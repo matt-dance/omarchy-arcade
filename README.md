@@ -215,12 +215,12 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
 7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
-8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…`. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
+8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…` with no empty `JSON.parse` warning. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
 9. **Steam Input coexistence** — no double input; with Steam running, physical pad preferred over virtual `28de:11ff`
 10. **Launch/return** — Proton game hides Arcade, quitting returns focus to the same card within ~2s
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
-13. **Small icons** — Battle.net without art shows a themed initials card; World of Warcraft with only a launcher icon shows that icon centered at native size (not upscaled/blurry). With a SteamGridDB key, both should pick up real covers/heroes by name.
+13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft with only a launcher icon stays in the library and shows that icon centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
 14. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
