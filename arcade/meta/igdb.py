@@ -102,10 +102,11 @@ def parse_games(payload: Any, title: str) -> dict[str, Any] | None:
     if not isinstance(payload, list) or not payload:
         return None
     names = [str(row.get("name") or "") for row in payload if isinstance(row, dict)]
-    idx = best_title_match(title, names)
+    # Exact normalized title only. A contains match would map "Battle.net"
+    # onto "Warcraft II: Battle.net Edition"; do not fall back to rank 0.
+    idx = best_title_match(title, names, exact=True)
     if idx is None:
-        # First result is IGDB's search rank when names are too messy.
-        idx = 0
+        return None
     row = payload[idx]
     if not isinstance(row, dict):
         return None

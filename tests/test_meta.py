@@ -12,12 +12,14 @@ from urllib.parse import urlparse
 
 from arcade.meta.cache import cache_stem, is_fresh, load_cached, meta_json_path, write_cached
 from arcade.meta.http import HttpError
+from arcade.meta.igdb import parse_games
 from arcade.meta.keys import Keys
+from arcade.meta.launchers import is_launcher, launcher_description
 from arcade.meta.protondb import parse_summary
 from arcade.meta.resolve import art_is_weak, resolve_game, should_search_steam
 from arcade.meta.steam import parse_appdetails, parse_store_search
 from arcade.meta.steamgriddb import parse_search
-from arcade.meta.textutil import parse_year, strip_html
+from arcade.meta.textutil import best_title_match, parse_year, strip_html
 from arcade.steam_local import playtime_for_appid, playtime_map
 
 FIXTURES = Path(__file__).parent / "fixtures" / "meta"
@@ -92,6 +94,15 @@ class TestTextUtil(unittest.TestCase):
         self.assertEqual(parse_year("24 Jan, 2024"), 2024)
         self.assertEqual(parse_year(1096588800), 2004)
         self.assertIsNone(parse_year(""))
+
+    def test_igdb_exact_title_rejects_substring_of_longer_name(self):
+        names = ["Warcraft II: Battle.net Edition", "Warcraft II: Tides of Darkness"]
+        self.assertIsNone(best_title_match("Battle.net", names, exact=True))
+        self.assertEqual(best_title_match("Battle.net", names), 0)
+        self.assertEqual(
+            best_title_match("World of Warcraft", ["World of Warcraft", "World of Warcraft Classic"], exact=True),
+            0,
+        )
 
 
 class TestSteamParsers(unittest.TestCase):
@@ -396,6 +407,135 @@ class TestResolve(unittest.TestCase):
             )
         )
         self.assertFalse(art_is_weak({"cover": "file:///Steam/library_600x900.jpg"}))
+
+    def test_igdb_parse_rejects_warcraft_ii_for_battlenet(self):
+        payload = _load_json("igdb_battlenet.json")
+        self.assertIsNone(parse_games(payload, "Battle.net"))
+        wow = parse_games(_load_json("igdb_wow.json"), "World of Warcraft")
+        assert wow is not None
+        self.assertEqual(wow["title"], "World of Warcraft")
+        self.assertIn("Azeroth", wow["description"])
+
+    def test_known_launchers_are_not_games(self):
+        launchers = [
+            {"id": "desktop:battle.net", "title": "Battle.net", "source": "desktop"},
+            {
+                "id": "desktop:battlenet",
+                "title": "Battle.net",
+                "source": "desktop",
+                "launch": {"kind": "argv", "value": ["omarchy-launch-battlenet"]},
+            },
+            {"id": "desktop:steam", "title": "Steam", "source": "desktop"},
+            {"id": "desktop:lutris", "title": "Lutris", "source": "desktop"},
+            {"id": "desktop:heroic", "title": "Heroic", "source": "desktop"},
+            {"id": "desktop:ea-app", "title": "EA App", "source": "desktop"},
+            {"id": "desktop:ubisoft-connect", "title": "Ubisoft Connect", "source": "desktop"},
+            {"id": "desktop:gog-galaxy", "title": "GOG Galaxy", "source": "desktop"},
+            {"id": "desktop:geforcenow", "title": "GeForce NOW", "source": "desktop"},
+        ]
+        for row in launchers:
+            self.assertTrue(is_launcher(row), row)
+            self.assertTrue(launcher_description(row))
+            self.assertFalse(should_search_steam(row))
+        games = [
+            {"id": "desktop:wow", "title": "World of Warcraft", "source": "desktop"},
+            {"id": "steam:1203620", "title": "Enshrouded", "source": "steam", "steamAppId": 1203620},
+            {"id": "gfn:gfn-102670811", "title": "Diablo IV", "source": "gfn", "store": "Steam"},
+            {"id": "steam:242050", "title": "Assassin's Creed IV Black Flag", "source": "steam"},
+        ]
+        for row in games:
+            self.assertFalse(is_launcher(row), row)
+
+    def test_launcher_skips_igdb_uses_copy_and_sgdb(self):
+        http = FakeHttp(
+            routes={
+                "oauth2/token": AssertionError("IGDB token should not be requested for a launcher"),
+                "api.igdb.com": _load_json("igdb_battlenet.json"),
+                "search/autocomplete": _load_json("sgdb_search_battlenet.json"),
+                "/grids/game/99": _load_json("sgdb_grids.json"),
+                "/heroes/game/99": {"success": True, "data": []},
+                "/logos/game/99": {"success": True, "data": []},
+            },
+            downloads={"https://example.test/sgdb/wow-cover.jpg": b"cover"},
+        )
+        keys = Keys(
+            steamgriddb_api_key="sgdb-secret",
+            twitch_client_id="twitch-id",
+            twitch_client_secret="twitch-secret",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = resolve_game(
+                {
+                    "id": "desktop:battle.net",
+                    "title": "Battle.net",
+                    "source": "desktop",
+                    "art": {
+                        "cover": "file:///icons/ba.png",
+                        "icon": "file:///icons/ba.png",
+                        "iconOnly": True,
+                    },
+                    "launch": {"kind": "desktop", "value": "/tmp/battle.net.desktop"},
+                },
+                http=http,
+                keys=keys,
+                cache_dir=Path(tmp),
+                steam_library_roots=[],
+            )
+            self.assertNotIn("igdb", meta["sourcesUsed"])
+            self.assertIn("launcher", meta["sourcesUsed"])
+            self.assertIn("steamgriddb", meta["sourcesUsed"])
+            self.assertIn("Blizzard", meta["description"])
+            self.assertNotIn("Warcraft II", meta["description"])
+            self.assertIsNone(meta.get("releaseYear"))
+            self.assertIsNone(meta.get("rating"))
+            self.assertEqual(meta.get("genres") or [], [])
+            self.assertTrue(meta["art"].get("cover", "").endswith("cover.jpg"))
+            self.assertFalse(any("api.igdb.com" in url or "id.twitch.tv" in url for _, url in http.calls))
+
+    def test_tainted_launcher_cache_is_refetched(self):
+        http = FakeHttp(
+            routes={
+                "oauth2/token": AssertionError("IGDB token should not be requested for a launcher"),
+                "api.igdb.com": AssertionError("IGDB should not be queried for a launcher"),
+                "search/autocomplete": _load_json("sgdb_search_battlenet.json"),
+                "/grids/game/99": {"success": True, "data": []},
+                "/heroes/game/99": {"success": True, "data": []},
+                "/logos/game/99": {"success": True, "data": []},
+            }
+        )
+        keys = Keys(
+            steamgriddb_api_key="sgdb-secret",
+            twitch_client_id="twitch-id",
+            twitch_client_secret="twitch-secret",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            write_cached(
+                "desktop:battle.net",
+                {
+                    "id": "desktop:battle.net",
+                    "fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "ttlDays": 14,
+                    "description": "The 1999 re-release of Warcraft II with Battle.net multiplayer.",
+                    "genres": ["Real Time Strategy (RTS)"],
+                    "releaseYear": 1999,
+                    "rating": {"source": "igdb", "score": 83, "label": "83"},
+                    "sourcesUsed": ["igdb"],
+                },
+                cache,
+            )
+            meta = resolve_game(
+                {"id": "desktop:battle.net", "title": "Battle.net", "source": "desktop"},
+                http=http,
+                keys=keys,
+                cache_dir=cache,
+                steam_library_roots=[],
+            )
+            self.assertIn("Blizzard", meta["description"])
+            self.assertNotIn("Warcraft II", meta["description"])
+            self.assertNotIn("igdb", meta["sourcesUsed"])
+            self.assertIsNone(meta.get("releaseYear"))
+            self.assertEqual(meta.get("genres") or [], [])
 
 
 class TestArcadeMetaCli(unittest.TestCase):

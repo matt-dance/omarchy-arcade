@@ -250,7 +250,15 @@ function isIconOnly(game) {
   return !!(game && game.art && game.art.iconOnly)
 }
 
-function isSmallArt(game, implicitW, implicitH) {
+function hasMetaCover(meta) {
+  return !!(meta && meta.art && meta.art.cover)
+}
+
+function isSmallArt(game, implicitW, implicitH, meta) {
+  // Cached metadata cover is real box art (SGDB / IGDB), even when the
+  // .desktop row still carries iconOnly and a BA placeholder.
+  if (hasMetaCover(meta))
+    return false
   var w = Number(implicitW) || 0
   var h = Number(implicitH) || 0
   // Measured pixels win over a stale iconOnly flag (GFN box art lives in Icon=).

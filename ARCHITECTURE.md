@@ -121,14 +121,14 @@ The binary VDF and text VDF/ACF parsers are about 150 lines of our own code, wit
 2. **Steam store** (`https://store.steampowered.com/api/appdetails`) when a Steam appid is known: short description, genres, developers/publishers, release date, Metacritic, screenshots. GFN titles with `store=Steam` (or no appid yet) go through the store search API and cache the mapped appid.
 3. **ProtonDB** summary API for that appid (Linux compatibility tier).
 4. **Local Steam playtime / last played** from `userdata/<id>/config/localconfig.vdf`.
-5. **IGDB** via Twitch client credentials, only when both keys are set. Used for non-Steam titles (Battle.net, WoW) and to fill gaps. Match by normalized name.
-6. **SteamGridDB**, only when a key is set. Grid / hero / logo. Preferred over a weak icon-only cover (the WoW `.desktop` icon case). Steam `librarycache` 600×900 art is left alone.
+5. **IGDB** via Twitch client credentials, only when both keys are set. Used for non-Steam *games* (World of Warcraft, desktop titles) and to fill gaps. Match is exact normalized title only — a contains match would map the Battle.net launcher onto *Warcraft II: Battle.net Edition*. Known launchers (Battle.net, Steam, Lutris, Heroic, EA app, Ubisoft Connect, GOG Galaxy, GeForce NOW client) skip IGDB and get a short launcher description instead.
+6. **SteamGridDB**, only when a key is set. Grid / hero / logo. Preferred over a weak icon-only cover (the WoW `.desktop` icon case, and launchers such as Battle.net). Steam `librarycache` 600×900 art is left alone. The Home card renders `meta.art.cover` when present, even if the library row is still `iconOnly`.
 
 Missing sources are skipped; errors are recorded without secrets. `--offline` uses cache + local playtime only. The overlay `FileView`s the selected game's meta JSON and starts `arcade-meta <id>` if it is missing or stale. The service prefetches the eight most recently played games after a scan.
 
 Optional keys live only in `~/.config/matt-dance.arcade/keys.json` (fields `steamgriddb_api_key`, `twitch_client_id`, `twitch_client_secret`) with env-var overrides `ARCADE_STEAMGRIDDB_API_KEY`, `ARCADE_TWITCH_CLIENT_ID`, `ARCADE_TWITCH_CLIENT_SECRET`. The repo ships `keys.example.json` with empty values. If the keys file is group/world readable, Arcade warns and tells the user to `chmod 600` it. Key values are never logged.
 
-Home UI: a horizontal game row on top; the bottom panel keeps art, title, source list and Play, then shows a clamped description, genre/developer chips, release year, rating, playtime, last played, a ProtonDB badge and a screenshot strip. Empty fields are hidden.
+Home UI: a horizontal game row on top; the bottom panel keeps art, title, source list and Play, then shows a clamped description, genre/developer chips, release year, rating, playtime, last played, a ProtonDB badge and a screenshot strip. Empty fields are hidden. The detail panel is a `BorderSurface` using `Border.hyprlandActiveSpec` (theme accent / Hyprland active-border color and width, `Style.cornerRadius` matching window rounding). Hero art is clipped inside that border.
 
 ## Artwork pipeline
 
@@ -171,7 +171,7 @@ idle ──launch──▶ starting ──window seen / pid alive──▶ runni
 
 The overlay uses only shell tokens:
 
-- **Surfaces:** `Commons.Color.menu.background`, `.text`, `.border`, `.scrim`, `.selectedBackground` and `.selectedText`. Card focus rings use the `[controls]` focus tokens (`focus-color`, `focus-border` with gradients through `BorderSurface`), so a theme's gradient border shows on the focused game.
+- **Surfaces:** `Commons.Color.menu.background`, `.text`, `.border`, `.scrim`, `.selectedBackground` and `.selectedText`. Card focus rings use the `[controls]` focus tokens (`focus-color`, `focus-border` with gradients through `BorderSurface`), so a theme's gradient border shows on the focused game. The Home detail panel uses `Border.hyprlandActiveSpec(Commons.Color.accent, …)` so it tracks the current theme's Hyprland active window border (color and thickness) and `Style.cornerRadius` (Hyprland `decoration:rounding`). No hardcoded hex colors.
 - **Type:** `Style.font.*`, scaled by `ui.scale` for 10-foot viewing. The family is the user's `monospace`, which makes Arcade look unmistakably Omarchy next to Big Picture.
 - **Spacing:** `Style.spacing.*` and `Style.space(px)`. Radius: `Style.cornerRadius`.
 - **Motion:** every animation goes through `Style.duration(ms)` with `Style.easeOut`. Reduce-motion is honored automatically.

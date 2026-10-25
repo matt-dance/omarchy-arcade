@@ -690,7 +690,7 @@ Item {
                   source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
-                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
+                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null)
                 }
 
                 Rectangle {
@@ -701,8 +701,8 @@ Item {
                   Image {
                     id: homeSmallIcon
                     anchors.centerIn: parent
-                    source: Model.coverUrl(modelData)
-                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                    source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
+                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null) && status === Image.Ready
                     asynchronous: true
                     fillMode: Image.Pad
                     cache: true
@@ -771,10 +771,28 @@ Item {
             }
           }
 
-          Item {
+          BorderSurface {
+            id: homeDetail
             Layout.fillWidth: true
             Layout.fillHeight: true
+            radius: root.cornerRadius
+            color: root.background
             clip: true
+            // Hyprland active window border from the current Omarchy theme
+            // (accent color / gradient + window thickness). Fall back to a
+            // flat accent stroke when an older shell lacks hyprlandActiveSpec.
+            borderSpec: (typeof Border.hyprlandActiveSpec === "function")
+                        ? Border.hyprlandActiveSpec(Commons.Color.accent, Math.max(2, Style.space(2)))
+                        : Border.flat(Commons.Color.accent, Math.max(2, Style.space(2)))
+
+            Item {
+              id: homeDetailInner
+              anchors.fill: parent
+              anchors.topMargin: homeDetail.contentTopInset
+              anchors.rightMargin: homeDetail.contentRightInset
+              anchors.bottomMargin: homeDetail.contentBottomInset
+              anchors.leftMargin: homeDetail.contentLeftInset
+              clip: true
 
             Image {
               id: heroArt
@@ -792,7 +810,7 @@ Item {
               fillMode: Image.PreserveAspectCrop
               asynchronous: true
               visible: heroArt.status !== Image.Ready && status === Image.Ready
-                       && !Model.isSmallArt(root.focusedGame, implicitWidth, implicitHeight)
+                       && !Model.isSmallArt(root.focusedGame, implicitWidth, implicitHeight, root.selectedMeta)
               opacity: 0.22
               scale: 1.18
             }
@@ -989,6 +1007,7 @@ Item {
                 }
               }
             }
+            }
           }
         }
 
@@ -1027,10 +1046,10 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 2
                 clip: true
-                source: Model.coverUrl(modelData)
+                source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
-                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight)
+                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null)
               }
 
               Rectangle {
@@ -1041,8 +1060,8 @@ Item {
                 Image {
                   id: librarySmallIcon
                   anchors.centerIn: parent
-                  source: Model.coverUrl(modelData)
-                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight) && status === Image.Ready
+                  source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
+                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null) && status === Image.Ready
                   asynchronous: true
                   fillMode: Image.Pad
                   cache: true

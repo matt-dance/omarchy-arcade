@@ -58,23 +58,34 @@ def parse_iso(value: str | None) -> datetime | None:
     return dt
 
 
-def best_title_match(title: str, names: list[str]) -> int | None:
-    """Return the index of the best normalized-title match, or None."""
+def best_title_match(
+    title: str,
+    names: list[str],
+    *,
+    exact: bool = False,
+) -> int | None:
+    """Return the index of the best normalized-title match, or None.
+
+    Exact normalized equality always wins. When `exact` is false, a
+    shorter/longer contains match is allowed so Steam/SGDB can still
+    map "Diablo IV" to a decorated store listing. IGDB uses `exact=True`
+    so "Battle.net" cannot match "Warcraft II: Battle.net Edition".
+    """
     want = normalize_title(title)
     if not want or not names:
         return None
-    exact: list[int] = []
+    exact_hits: list[int] = []
     contains: list[int] = []
     for i, name in enumerate(names):
         got = normalize_title(name)
         if not got:
             continue
         if got == want:
-            exact.append(i)
-        elif want in got or got in want:
+            exact_hits.append(i)
+        elif not exact and (want in got or got in want):
             contains.append(i)
-    if exact:
-        return exact[0]
+    if exact_hits:
+        return exact_hits[0]
     if contains:
         return contains[0]
     return None

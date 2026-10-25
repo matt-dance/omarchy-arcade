@@ -141,15 +141,15 @@ Configured in `default/arcade.toml`. Override in `~/.config/omarchy/arcade/arcad
 
 ## Game details (Home)
 
-Home is a game row on top and a detail panel below. The panel always has cover art, title, sources and Play. When metadata is cached it also shows a short description, genre and developer chips, release year, Metacritic or IGDB rating, local Steam playtime and last played, a ProtonDB tier badge, and a screenshot strip. Empty fields stay hidden.
+Home is a game row on top and a detail panel below. The panel uses an Omarchy window border (Hyprland active-border color and thickness from the current theme, same corner rounding as windows) and clips hero art inside it. It always has cover art, title, sources and Play. When metadata is cached it also shows a short description, genre and developer chips, release year, Metacritic or IGDB rating, local Steam playtime and last played, a ProtonDB tier badge, and a screenshot strip. Empty fields stay hidden.
 
 Sources, in order:
 
 1. **Steam store appdetails** (no key) — description, genres, developer/publisher, release date, Metacritic, screenshots — for any title with a Steam appid, including GeForce NOW games that map to one.
 2. **Local Steam** `localconfig.vdf` — playtime and last played per appid.
 3. **ProtonDB** summary (no key) — Linux compatibility tier for Steam appids.
-4. **IGDB** (optional Twitch credentials) — same fields plus a rating, used for non-Steam games such as World of Warcraft and Battle.net titles.
-5. **SteamGridDB** (optional key) — high-res grid / hero / logo, preferred over a blurry `.desktop` icon.
+4. **IGDB** (optional Twitch credentials) — same fields plus a rating, used for non-Steam *games* such as World of Warcraft. Known launchers (Battle.net, Steam, Lutris, Heroic, EA app, Ubisoft Connect, GOG Galaxy, GeForce NOW) skip IGDB — they get a short launcher description instead of a 1990s RTS that happens to contain the word "Battle.net".
+5. **SteamGridDB** (optional key) — high-res grid / hero / logo, preferred over a blurry `.desktop` icon (including the Battle.net launcher). The focused Home card shows that cover when metadata has one.
 
 Refresh is rare (14 days). The UI never waits on the network: it shows cache immediately and lets `arcade-meta` update the file in the background.
 
