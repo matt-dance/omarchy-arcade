@@ -14,10 +14,15 @@ if str(ROOT) not in sys.path:
 
 from arcade.art import fetch_sgdb_image, search_sgdb_game_id
 from arcade.config import load_config
+from arcade.meta.keys import load_keys
 from arcade.paths import arcade_cache_dir, expand_user, library_path
 
 
 def _sgdb_key(cfg) -> str | None:
+    keys = load_keys()
+    if keys.steamgriddb_api_key:
+        return keys.steamgriddb_api_key
+    # Legacy single-line file still accepted for arcade-art.
     key_file = cfg.art.get("steamgriddb_key_file")
     if not key_file:
         return None

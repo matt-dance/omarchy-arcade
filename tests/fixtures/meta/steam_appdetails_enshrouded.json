@@ -1,0 +1,31 @@
+{
+  "1203620": {
+    "success": true,
+    "data": {
+      "name": "Enshrouded",
+      "steam_appid": 1203620,
+      "short_description": "Enshrouded is a game of survival, crafting, and <b>action</b> combat.",
+      "developers": ["Keen Games GmbH"],
+      "publishers": ["Keen Games GmbH"],
+      "genres": [
+        {"id": "1", "description": "Action"},
+        {"id": "25", "description": "Adventure"},
+        {"id": "23", "description": "Indie"}
+      ],
+      "release_date": {"coming_soon": false, "date": "24 Jan, 2024"},
+      "metacritic": {"score": 81, "url": "https://www.metacritic.com/game/enshrouded"},
+      "screenshots": [
+        {
+          "id": 0,
+          "path_thumbnail": "https://example.test/enshrouded/ss0_t.jpg",
+          "path_full": "https://example.test/enshrouded/ss0.jpg"
+        },
+        {
+          "id": 1,
+          "path_thumbnail": "https://example.test/enshrouded/ss1_t.jpg",
+          "path_full": "https://example.test/enshrouded/ss1.jpg"
+        }
+      ]
+    }
+  }
+}

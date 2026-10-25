@@ -214,22 +214,33 @@ function formatLastPlayed(iso) {
   return months[month - 1] + " " + d + ", " + day.slice(0, 4)
 }
 
-function playMeta(game) {
-  if (!game) return ""
-  if (game.lastPlayed)
-    return "Last played " + formatLastPlayed(game.lastPlayed)
-  if (game.playtimeMinutes)
-    return formatPlaytime(game.playtimeMinutes) + " played"
-  return ""
+function playMeta(game, meta) {
+  if (!game && !meta) return ""
+  var last = (meta && meta.lastPlayed) || (game && game.lastPlayed)
+  var minutes = (meta && meta.playtimeMinutes) || (game && game.playtimeMinutes)
+  var parts = []
+  var year = formatYear(meta && meta.releaseYear)
+  var rating = formatRating(meta && meta.rating)
+  var proton = protonLabel(meta && meta.proton)
+  if (year) parts.push(year)
+  if (rating) parts.push(rating)
+  if (minutes) parts.push(formatPlaytime(minutes) + " played")
+  if (last) parts.push("Last played " + formatLastPlayed(last))
+  if (proton) parts.push(proton)
+  return parts.join("  ·  ")
 }
 
-function heroUrl(game) {
+function heroUrl(game, meta) {
+  if (meta && meta.art && meta.art.hero)
+    return meta.art.hero
   if (game && game.art && game.art.hero)
     return game.art.hero
   return ""
 }
 
-function coverUrl(game) {
+function coverUrl(game, meta) {
+  if (meta && meta.art && meta.art.cover)
+    return meta.art.cover
   if (game && game.art && game.art.cover)
     return game.art.cover
   return ""
@@ -317,4 +328,113 @@ function initials(title) {
   var parts = t.split(/\s+/)
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[1][0]).toUpperCase()
+}
+
+function cacheStem(gameId) {
+  var id = String(gameId || "").trim()
+  if (!id.length) return ""
+  return id.replace(/[^A-Za-z0-9._-]+/g, "_")
+}
+
+function metaFilePath(home, xdgCacheHome, gameId) {
+  var stem = cacheStem(gameId)
+  if (!stem.length) return ""
+  return cacheDir(home, xdgCacheHome) + "/meta/" + stem + ".json"
+}
+
+function parseMetaText(text) {
+  if (!text || !String(text).length)
+    return {}
+  try {
+    var data = JSON.parse(text)
+    return data && typeof data === "object" ? data : {}
+  } catch (e) {
+    return {}
+  }
+}
+
+function metaIsFresh(meta) {
+  if (!meta || !meta.fetchedAt) return false
+  var fetched = Date.parse(meta.fetchedAt)
+  if (isNaN(fetched)) return false
+  var days = Number(meta.ttlDays || 14)
+  if (!days) days = 14
+  return (Date.now() - fetched) < days * 86400000
+}
+
+function sourceLabels(game) {
+  if (!game) return []
+  var out = [sourceLabel(game.source)]
+  var extra = game.alsoOn || []
+  for (var i = 0; i < extra.length; i++) {
+    var a = extra[i]
+    if (!a || typeof a === "string") continue
+    var label = sourceLabel(a.source)
+    if (label && out.indexOf(label) === -1)
+      out.push(label)
+  }
+  return out.filter(function(s) { return !!s })
+}
+
+function metaChips(meta) {
+  var out = []
+  if (!meta) return out
+  var genres = meta.genres || []
+  var developers = meta.developers || []
+  var i
+  for (i = 0; i < genres.length && out.length < 4; i++) {
+    if (genres[i] && out.indexOf(genres[i]) === -1)
+      out.push(genres[i])
+  }
+  for (i = 0; i < developers.length && out.length < 6; i++) {
+    if (developers[i] && out.indexOf(developers[i]) === -1)
+      out.push(developers[i])
+  }
+  return out
+}
+
+function formatRating(rating) {
+  if (!rating || rating.score == null) return ""
+  var score = String(rating.label || rating.score)
+  var source = String(rating.source || "")
+  if (source === "metacritic") return score + " Metacritic"
+  if (source === "igdb") return score + " IGDB"
+  return score
+}
+
+function formatYear(year) {
+  if (year == null || year === "") return ""
+  var n = Number(year)
+  if (!n) return ""
+  return String(n)
+}
+
+function protonLabel(proton) {
+  if (!proton || !proton.tier) return ""
+  var tier = String(proton.tier)
+  return "ProtonDB " + tier.charAt(0).toUpperCase() + tier.slice(1)
+}
+
+function descriptionText(game, meta) {
+  var fromMeta = meta && meta.description ? String(meta.description).trim() : ""
+  if (fromMeta.length) return fromMeta
+  var raw = game && game.description ? String(game.description).trim() : ""
+  if (!raw.length) return ""
+  var skip = ["steam", "ubisoft", "epic", "gog", "amazon", "geforce now", "gfn"]
+  if (skip.indexOf(raw.toLowerCase()) !== -1) return ""
+  return raw
+}
+
+function playtimeMinutesOf(game, meta) {
+  if (meta && meta.playtimeMinutes) return meta.playtimeMinutes
+  return game ? game.playtimeMinutes : null
+}
+
+function lastPlayedOf(game, meta) {
+  if (meta && meta.lastPlayed) return meta.lastPlayed
+  return game ? game.lastPlayed : null
+}
+
+function factsLine(game, meta) {
+  return playMeta(game, meta)
 }

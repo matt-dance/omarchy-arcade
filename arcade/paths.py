@@ -46,8 +46,21 @@ def arcade_config_dir() -> Path:
     return xdg_config_home() / "omarchy" / "arcade"
 
 
+def plugin_user_config_dir() -> Path:
+    """Plugin-owned config (API keys). Distinct from arcade.toml."""
+    return xdg_config_home() / PLUGIN_ID
+
+
+def keys_path() -> Path:
+    return plugin_user_config_dir() / "keys.json"
+
+
 def arcade_cache_dir() -> Path:
     return xdg_cache_home() / PLUGIN_ID
+
+
+def meta_cache_dir() -> Path:
+    return arcade_cache_dir() / "meta"
 
 
 def arcade_state_dir() -> Path:

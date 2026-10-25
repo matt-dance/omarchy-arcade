@@ -77,7 +77,9 @@ python3 bin/arcade-scan --json
 
 Library cache: `${XDG_CACHE_HOME:-~/.cache}/matt-dance.arcade/library.json`
 
-The overlay reads that file itself. If the service is missing, Arcade still shows the cached games and can scan/launch without it.
+Per-game metadata: `${XDG_CACHE_HOME:-~/.cache}/matt-dance.arcade/meta/<id>.json` (plus images). Fetched in the background by `bin/arcade-meta`, cached for 14 days, and read offline from disk.
+
+The overlay reads those files itself. If the service is missing, Arcade still shows the cached games and can scan/launch/load metadata without it.
 
 ## Recovering a dead service
 
@@ -137,17 +139,64 @@ Configured in `default/arcade.toml`. Override in `~/.config/omarchy/arcade/arcad
 
 **Steam tip:** turn off Steam › Settings › Controller › “Guide button focuses Steam”, or set `modifier = "SELECT"` in your config.
 
-## Optional SteamGridDB art
+## Game details (Home)
+
+Home is a game row on top and a detail panel below. The panel always has cover art, title, sources and Play. When metadata is cached it also shows a short description, genre and developer chips, release year, Metacritic or IGDB rating, local Steam playtime and last played, a ProtonDB tier badge, and a screenshot strip. Empty fields stay hidden.
+
+Sources, in order:
+
+1. **Steam store appdetails** (no key) — description, genres, developer/publisher, release date, Metacritic, screenshots — for any title with a Steam appid, including GeForce NOW games that map to one.
+2. **Local Steam** `localconfig.vdf` — playtime and last played per appid.
+3. **ProtonDB** summary (no key) — Linux compatibility tier for Steam appids.
+4. **IGDB** (optional Twitch credentials) — same fields plus a rating, used for non-Steam games such as World of Warcraft and Battle.net titles.
+5. **SteamGridDB** (optional key) — high-res grid / hero / logo, preferred over a blurry `.desktop` icon.
+
+Refresh is rare (14 days). The UI never waits on the network: it shows cache immediately and lets `arcade-meta` update the file in the background.
+
+### Optional API keys
+
+The git repo is public. **Never commit keys.** Copy the example file to a private path and lock it down:
 
 ```bash
-mkdir -p ~/.config/omarchy/arcade
-echo 'YOUR_API_KEY' > ~/.config/omarchy/arcade/steamgriddb.key
-omarchy-shell shell call matt-dance.arcade rescan '{}'
+mkdir -p ~/.config/matt-dance.arcade
+cp keys.example.json ~/.config/matt-dance.arcade/keys.json
+chmod 600 ~/.config/matt-dance.arcade/keys.json
+# then edit the file
 ```
 
-Without a key, Arcade uses local launcher art (Steam `library_hero` when present) and themed typographic cards. A `.desktop` `Icon=` is treated as a small app icon, not a box-art cover: Home and Library center it at native size on a themed card instead of stretching it. With a key, `arcade-art` also searches SteamGridDB **by title** (Battle.net, World of Warcraft, …) when there is no Steam appid.
+`~/.config/matt-dance.arcade/keys.json`:
+
+```json
+{
+  "steamgriddb_api_key": "",
+  "twitch_client_id": "",
+  "twitch_client_secret": ""
+}
+```
+
+Environment-variable overrides (win over the file):
+
+| Variable | Field |
+|---|---|
+| `ARCADE_STEAMGRIDDB_API_KEY` | `steamgriddb_api_key` |
+| `ARCADE_TWITCH_CLIENT_ID` | `twitch_client_id` |
+| `ARCADE_TWITCH_CLIENT_SECRET` | `twitch_client_secret` |
+
+Arcade warns if the file is group/world readable (`chmod 600` again). Key values are never written to the journal.
+
+**SteamGridDB** — sign in at [steamgriddb.com](https://www.steamgriddb.com/), open [Preferences → API](https://www.steamgriddb.com/profile/preferences/api), create a key. Used for cover/hero/logo when local art is missing or is only a low-res icon.
+
+**IGDB / Twitch** — register a Twitch application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) (any name; OAuth redirect can be `http://localhost`). Copy the Client ID and Client Secret. Arcade uses the client-credentials grant against IGDB; no user login.
+
+Without keys, Steam / ProtonDB / local playtime still work. A legacy `~/.config/omarchy/arcade/steamgriddb.key` file is still read by `arcade-art` if `keys.json` has no SteamGridDB key. Without any key, Arcade uses local launcher art (Steam `library_hero` when present) and themed typographic cards. A `.desktop` `Icon=` is treated as a small app icon, not a box-art cover.
 
 Home prefers SteamGridDB hero art, then the Steam library hero, then a dimmed cover (never a tiny icon).
+
+```bash
+omarchy-shell shell call matt-dance.arcade rescan '{}'
+# or from a checkout:
+python3 bin/arcade-meta --plugin-dir . --limit 8
+```
 
 ## Optional ROM scan
 
@@ -172,8 +221,10 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ├── bin/arcaded            # Python stdlib daemon (evdev + session)
 ├── bin/arcade-scan        # One-shot library scan
 ├── bin/arcade-art         # Optional SteamGridDB cover + hero fetch
+├── bin/arcade-meta        # Background game metadata (Steam, ProtonDB, optional IGDB/SGDB)
 ├── bin/arcade-sys         # System menu probes/actions (wpctl, nmcli, …)
 ├── arcade/                # Python package
+├── keys.example.json      # Empty optional API key template
 ├── default/arcade.toml
 ├── extensions/omarchy-menu.jsonc
 ├── hypr/arcade.lua
@@ -194,6 +245,7 @@ python3 -m unittest discover -s tests -v
 ./tests/run.sh
 
 python3 bin/arcade-scan --json
+python3 bin/arcade-meta --plugin-dir . --offline --limit 1
 python3 bin/arcade-sys items
 printf '{"t":"ping"}\n' | python3 bin/arcaded --plugin-dir .   # Ctrl+D to exit
 ```

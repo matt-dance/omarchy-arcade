@@ -83,6 +83,19 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("isSmallArt", qml)
         self.assertIn("clip: true", qml)
         self.assertIn("PreserveAspectCrop", qml)
+        self.assertIn("function metaFilePath", js)
+        self.assertIn("function parseMetaText", js)
+        self.assertIn("function metaIsFresh", js)
+        self.assertIn("function factsLine", js)
+        self.assertIn("function protonLabel", js)
+        self.assertIn("arcade-meta", qml)
+        self.assertIn("selectedMeta", qml)
+        self.assertIn("heroArt", qml)
+        self.assertIn("screenshots", qml)
+        self.assertIn("chmod 600", qml)
+        self.assertIn('text: "Play"', qml)
+        self.assertIn('text: "Options"', qml)
+        self.assertNotIn("steamgriddb_api_key", qml)
 
     def test_show_quick_menu_logs_and_persists(self):
         qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
@@ -116,6 +129,21 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("omarchy-restart-shell", readme)
         self.assertIn("journalctl --user", readme)
         self.assertIn("Recovering a dead service", readme)
+
+    def test_readme_documents_metadata_keys(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("~/.config/matt-dance.arcade/keys.json", readme)
+        self.assertIn("chmod 600", readme)
+        self.assertIn("steamgriddb_api_key", readme)
+        self.assertIn("twitch_client_id", readme)
+        self.assertIn("twitch_client_secret", readme)
+        self.assertIn("ARCADE_STEAMGRIDDB_API_KEY", readme)
+        self.assertIn("dev.twitch.tv/console/apps", readme)
+        self.assertIn("steamgriddb.com/profile/preferences/api", readme)
+        self.assertIn("arcade-meta", readme)
+        arch = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+        self.assertIn("Game metadata", arch)
+        self.assertIn("arcade-meta", arch)
 
 
 class TestArcadedBanner(unittest.TestCase):

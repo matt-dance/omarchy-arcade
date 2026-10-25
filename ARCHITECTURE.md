@@ -12,6 +12,7 @@ omarchy-shell (Quickshell, Qt 6, one long-lived process)
     │   ├── Process: bin/arcaded --exit-with-stdin   (long-lived, JSON lines both ways)
     │   ├── Process: bin/arcade-scan --json          (one-shot, on open/rescan/file change)
     │   ├── Process: bin/arcade-art <ids…>           (one-shot batches, low priority)
+    │   ├── Process: bin/arcade-meta <ids…>          (one-shot, metadata cache, never on the UI thread)
     │   ├── Hyprland event stream (Quickshell.Hyprland) for window open/close/focus
     │   ├── IdleInhibitor while Arcade is open or a tracked game runs
     │   └── FileView watches: arcade.toml, library sources, theme changes are automatic
@@ -89,6 +90,7 @@ Service to daemon:
 ```
 
 - **Library cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/library.json`. It is rebuilt by `arcade-scan` and atomically replaced.
+- **Metadata cache:** `${XDG_CACHE_HOME}/matt-dance.arcade/meta/<id>.json` plus images in `meta/<id>/`. Written by `arcade-meta`. Fresh for 14 days; stale cache is still shown while a refresh runs.
 - **User state:** `${XDG_STATE_HOME}/matt-dance.arcade/state.json` holds favorites, hidden games, per-game options, Arcade's own last-played times and playtime, and the "Play on" preference. It survives rescans and cache wipes.
 - **Merging:** a `.desktop` entry whose `Exec` launches `steam://rungameid/`, `heroic://`, `lutris:rungameid/` or `itch://` is folded into that source's entry. Titles that match after normalization (including stripping a `GFN - ` prefix) across different stores collapse into one card with `alsoOn` launch payloads for the Play on… picker.
 
@@ -110,6 +112,23 @@ Each scanner is a pure function, `scan(home, env) -> list[Game]`, that never rai
 | Moonlight (M4) | `~/.config/Moonlight Game Streaming Project/Moonlight.conf` hosts and apps | `moonlight stream <host> <app>` | Scope |
 
 The binary VDF and text VDF/ACF parsers are about 150 lines of our own code, with fixture tests. We copy nothing from GPL projects.
+
+## Game metadata
+
+`bin/arcade-meta` fills the Home detail panel. It is a one-shot subprocess (same rule as scan/art): QML never does HTTP or JSON parsing of store APIs.
+
+1. **Cache first.** `~/.cache/matt-dance.arcade/meta/<id>.json` (colons in the game id become `_`). If `fetchedAt` is newer than 14 days, return it. Local Steam playtime from `localconfig.vdf` is overlaid on every read.
+2. **Steam store** (`https://store.steampowered.com/api/appdetails`) when a Steam appid is known: short description, genres, developers/publishers, release date, Metacritic, screenshots. GFN titles with `store=Steam` (or no appid yet) go through the store search API and cache the mapped appid.
+3. **ProtonDB** summary API for that appid (Linux compatibility tier).
+4. **Local Steam playtime / last played** from `userdata/<id>/config/localconfig.vdf`.
+5. **IGDB** via Twitch client credentials, only when both keys are set. Used for non-Steam titles (Battle.net, WoW) and to fill gaps. Match by normalized name.
+6. **SteamGridDB**, only when a key is set. Grid / hero / logo. Preferred over a weak icon-only cover (the WoW `.desktop` icon case). Steam `librarycache` 600×900 art is left alone.
+
+Missing sources are skipped; errors are recorded without secrets. `--offline` uses cache + local playtime only. The overlay `FileView`s the selected game's meta JSON and starts `arcade-meta <id>` if it is missing or stale. The service prefetches the eight most recently played games after a scan.
+
+Optional keys live only in `~/.config/matt-dance.arcade/keys.json` (fields `steamgriddb_api_key`, `twitch_client_id`, `twitch_client_secret`) with env-var overrides `ARCADE_STEAMGRIDDB_API_KEY`, `ARCADE_TWITCH_CLIENT_ID`, `ARCADE_TWITCH_CLIENT_SECRET`. The repo ships `keys.example.json` with empty values. If the keys file is group/world readable, Arcade warns and tells the user to `chmod 600` it. Key values are never logged.
+
+Home UI: a horizontal game row on top; the bottom panel keeps art, title, source list and Play, then shows a clamped description, genre/developer chips, release year, rating, playtime, last played, a ProtonDB badge and a screenshot strip. Empty fields are hidden.
 
 ## Artwork pipeline
 
@@ -183,8 +202,9 @@ When Arcade is opened before `install.sh` has run (from the menu or IPC), Settin
 ├── QuickMenu.qml
 ├── screens/            Home.qml, Library.qml, Details.qml, Search.qml, Settings.qml, Power.qml
 ├── ui/                 FocusGrid.qml, GameCard.qml, TypeCard.qml, Shelf.qml, HintBar.qml, Osk.qml, Glyphs.js
-├── bin/                arcaded, arcade-scan, arcade-art   (Python entry points, #!/usr/bin/python3)
-├── arcade/             Python package: input/, combos/, session/, uinput/, config/, scanners/, art/, vdf.py, model.py
+├── bin/                arcaded, arcade-scan, arcade-art, arcade-meta   (Python entry points, #!/usr/bin/python3)
+├── arcade/             Python package: input/, combos/, session/, uinput/, config/, scanners/, art/, meta/, vdf.py, model.py
+├── keys.example.json   empty optional API key template (never commit real keys)
 ├── default/arcade.toml
 ├── extensions/omarchy-menu.jsonc
 ├── hypr/arcade.lua

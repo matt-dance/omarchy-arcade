@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-import time
 from pathlib import Path
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
 from ..paths import steam_roots
+from ..steam_local import playtime_map
 from ..vdf import parse_binary, parse_text, steam_shortcut_app_id
 
 # Tool / runtime appids that are not games.
@@ -179,54 +179,6 @@ def _cover_for(root: Path, appid: int) -> str | None:
     return None
 
 
-def _playtime_map(root: Path) -> dict[int, tuple[int | None, str | None]]:
-    """Return appid -> (playtime_minutes, last_played_iso)."""
-    out: dict[int, tuple[int | None, str | None]] = {}
-    userdata = root / "userdata"
-    if not userdata.is_dir():
-        return out
-    for user in userdata.iterdir():
-        cfg = user / "config" / "localconfig.vdf"
-        if not cfg.is_file():
-            continue
-        try:
-            data = parse_text(cfg.read_text(encoding="utf-8", errors="replace"))
-        except Exception:
-            continue
-        try:
-            apps = (
-                data["UserLocalConfigStore"]["Software"]["Valve"]["Steam"]["apps"]
-            )
-        except (KeyError, TypeError):
-            continue
-        if not isinstance(apps, dict):
-            continue
-        for appid_s, info in apps.items():
-            if not isinstance(info, dict):
-                continue
-            try:
-                appid = int(appid_s)
-            except ValueError:
-                continue
-            minutes = None
-            if "Playtime" in info:
-                try:
-                    minutes = int(info["Playtime"])
-                except ValueError:
-                    minutes = None
-            last = None
-            if "LastPlayed" in info:
-                try:
-                    ts = int(info["LastPlayed"])
-                    if ts > 0:
-                        last = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
-                except ValueError:
-                    pass
-            if minutes is not None or last is not None:
-                out[appid] = (minutes, last)
-    return out
-
-
 def _scan_manifests(root: Path, playtimes: dict) -> list[Game]:
     games: list[Game] = []
     for library in _library_folders(root):
@@ -338,7 +290,7 @@ def scan() -> tuple[list[Game], list[ScanError]]:
     errors: list[ScanError] = []
     for root in roots:
         try:
-            playtimes = _playtime_map(root)
+            playtimes = playtime_map(root)
             games.extend(_scan_manifests(root, playtimes))
             games.extend(_scan_shortcuts(root))
         except Exception as exc:  # noqa: BLE001

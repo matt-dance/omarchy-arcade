@@ -25,6 +25,7 @@ Item {
   readonly property string daemonBin: root.pluginDir + "/bin/arcaded"
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
+  readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
 
   property var games: []
   property var scanErrors: []
@@ -393,6 +394,10 @@ Item {
           artProcess.command = root.pythonCmd(root.artBin, ["--plugin-dir", root.pluginDir, "--limit", "10"])
           artProcess.running = true
         }
+        if (!metaProcess.running) {
+          metaProcess.command = root.pythonCmd(root.metaBin, ["--plugin-dir", root.pluginDir, "--limit", "8"])
+          metaProcess.running = true
+        }
       }
     }
     stderr: StdioCollector {
@@ -410,6 +415,19 @@ Item {
         try {
           var data = JSON.parse(text)
           if (data.updated > 0)
+            root.loadLibraryFromDisk()
+        } catch (e) {}
+      }
+    }
+  }
+
+  Process {
+    id: metaProcess
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var data = JSON.parse(text)
+          if (data && data.artUpdated > 0)
             root.loadLibraryFromDisk()
         } catch (e) {}
       }

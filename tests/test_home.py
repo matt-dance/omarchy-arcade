@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import unittest
 
+from pathlib import Path
+
 from arcade.home import (
+    cache_stem,
     cover_url,
     format_last_played,
     format_playtime,
@@ -17,6 +20,9 @@ from arcade.home import (
     source_badges,
     source_label,
 )
+from arcade.meta.cache import cache_stem as meta_cache_stem, meta_json_path
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class TestHomeShelf(unittest.TestCase):
@@ -99,6 +105,29 @@ class TestBadgesAndPlayOn(unittest.TestCase):
     def test_source_label_case(self):
         self.assertEqual(source_label("Steam"), "Steam")
         self.assertEqual(source_label("gfn"), "GeForce NOW")
+
+
+class TestMetaFilename(unittest.TestCase):
+    def test_id_to_filename_stem(self):
+        cases = {
+            "steam:1203620": "steam_1203620",
+            "gfn:gfn-107820252": "gfn_gfn-107820252",
+            "desktop:wow": "desktop_wow",
+            "steam:shortcut:123": "steam_shortcut_123",
+        }
+        for game_id, stem in cases.items():
+            self.assertEqual(cache_stem(game_id), stem)
+            self.assertEqual(meta_cache_stem(game_id), stem)
+            self.assertTrue(str(meta_json_path(game_id)).endswith(f"{stem}.json"))
+
+    def test_js_uses_the_same_mapping(self):
+        js = (ROOT / "ArcadeModel.js").read_text(encoding="utf-8")
+        self.assertIn('id.replace(/[^A-Za-z0-9._-]+/g, "_")', js)
+        self.assertIn('"/meta/" + stem + ".json"', js)
+        qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
+        self.assertIn("function metaFilePath", js)
+        self.assertIn("root.focusedGame ? root.focusedGame.id", qml)
+        self.assertIn("applyMetaStdout", qml)
 
 
 class TestPlayMeta(unittest.TestCase):
