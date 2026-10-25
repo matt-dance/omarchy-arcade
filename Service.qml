@@ -22,6 +22,11 @@ Item {
     return base + "/matt-dance.arcade"
   }
   readonly property string libraryFile: root.cacheDir + "/library.json"
+  readonly property string userConfigFile: {
+    var xdg = Quickshell.env("XDG_CONFIG_HOME")
+    var home = Quickshell.env("HOME") || ""
+    return ((xdg && xdg.length) ? xdg : (home + "/.config")) + "/omarchy/arcade/arcade.toml"
+  }
   readonly property string daemonBin: root.pluginDir + "/bin/arcaded"
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
@@ -370,6 +375,24 @@ Item {
   onManifestChanged: {
     root.log("manifest attached id=" + Model.pluginId(root.manifest))
     root.startDaemon()
+  }
+
+  // arcade.toml edits apply without restarting the shell.
+  FileView {
+    id: userConfigView
+    path: root.userConfigFile
+    watchChanges: true
+    onFileChanged: configReload.restart()
+  }
+
+  Timer {
+    id: configReload
+    interval: 300
+    repeat: false
+    onTriggered: {
+      root.log("arcade.toml changed — reloading bindings")
+      root.sendDaemon({ t: "reload" })
+    }
   }
 
   FileView {
