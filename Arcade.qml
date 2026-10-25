@@ -54,6 +54,7 @@ Item {
   property bool keysConfirmRemove: false
   property string pendingKeysStdin: ""
   property var queuedKeysArgs: null
+  property point lastPointer: Qt.point(-1, -1)
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -412,6 +413,15 @@ Item {
       metaRefreshProcess.running = true
     }
     root.ensureMeta(root.focusedGame)
+  }
+
+  // Hover only counts when the pointer really moved. A sheet that appears
+  // under a resting pointer must not steal the controller's focus.
+  function pointerMoved(scenePos) {
+    var lastX = root.lastPointer.x
+    var lastY = root.lastPointer.y
+    root.lastPointer = Qt.point(scenePos.x, scenePos.y)
+    return lastX >= 0 && (scenePos.x !== lastX || scenePos.y !== lastY)
   }
 
   function openKeys() {
@@ -1687,7 +1697,10 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   hoverEnabled: true
-                  onEntered: root.keysIndex = index
+                  onPositionChanged: function(mouse) {
+                    if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                      root.keysIndex = index
+                  }
                   onClicked: {
                     root.keysIndex = index
                     root.keysAccept()
