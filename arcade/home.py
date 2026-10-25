@@ -204,7 +204,11 @@ def hero_url(game: dict[str, Any] | None) -> str:
     return ""
 
 
-def cover_url(game: dict[str, Any] | None) -> str:
+def cover_url(game: dict[str, Any] | None, meta: dict[str, Any] | None = None) -> str:
+    if meta:
+        art = meta.get("art") or {}
+        if isinstance(art, dict) and art.get("cover"):
+            return str(art["cover"])
     if not game:
         return ""
     art = game.get("art") or {}
@@ -218,3 +222,40 @@ def is_icon_only(game: dict[str, Any] | None) -> bool:
         return False
     art = game.get("art") or {}
     return bool(isinstance(art, dict) and art.get("iconOnly"))
+
+
+def has_meta_cover(meta: dict[str, Any] | None) -> bool:
+    if not meta:
+        return False
+    art = meta.get("art") or {}
+    return bool(isinstance(art, dict) and art.get("cover"))
+
+
+def lookup_meta(game: dict[str, Any] | None, meta_by_id: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not game or not game.get("id") or not meta_by_id:
+        return None
+    found = meta_by_id.get(game.get("id"))
+    return found if isinstance(found, dict) else None
+
+
+def remember_meta(meta_by_id: dict[str, Any] | None, meta: dict[str, Any] | None) -> dict[str, Any]:
+    next_map = dict(meta_by_id or {})
+    if meta and meta.get("id"):
+        next_map[str(meta["id"])] = meta
+    return next_map
+
+
+def is_small_art(
+    game: dict[str, Any] | None,
+    implicit_w: float = 0,
+    implicit_h: float = 0,
+    meta: dict[str, Any] | None = None,
+) -> bool:
+    """True when the card should show a small icon, not cropped box art."""
+    if has_meta_cover(meta):
+        return False
+    width = float(implicit_w or 0)
+    height = float(implicit_h or 0)
+    if width > 0 or height > 0:
+        return max(width, height) < 256
+    return is_icon_only(game)

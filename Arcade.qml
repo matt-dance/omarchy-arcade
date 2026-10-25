@@ -42,6 +42,7 @@ Item {
   property int detailButton: 0         // 0 Play, 1 Options
   property var focusedGame: null
   property var selectedMeta: ({})
+  property var metaById: ({})
   property string pendingMetaId: ""
   property bool menuPinned: false
   property bool libraryBeneathMenu: false
@@ -168,6 +169,7 @@ Item {
     console.warn("matt-dance.arcade: overlay cache " + root.libraryFile + " games=" + root.localGames.length
                  + " service=" + (root.service && root.service.games ? root.service.games.length : "no"))
     root.refreshList()
+    root.loadCachedArt()
   }
 
   function startLocalScan() {
@@ -254,9 +256,31 @@ Item {
     var parsed = Model.parseMetaText(text)
     if (parsed && parsed.id) {
       root.selectedMeta = parsed
+      root.ingestMeta(parsed)
       console.warn("matt-dance.arcade: meta loaded id=" + parsed.id
                    + " file=" + root.metaFile)
     }
+  }
+
+  function ingestMeta(meta) {
+    if (!meta || !meta.id)
+      return
+    root.metaById = Model.rememberMeta(root.metaById, meta)
+  }
+
+  function ingestCachedArt(payload) {
+    if (!payload)
+      return
+    root.metaById = Model.rememberMetaMap(root.metaById, payload)
+  }
+
+  function loadCachedArt() {
+    if (cachedArtProcess.running)
+      return
+    cachedArtProcess.command = [
+      "/usr/bin/python3", root.metaBin, "--plugin-dir", root.pluginDir, "--cached-art"
+    ]
+    cachedArtProcess.running = true
   }
 
   function applyMetaStdout(text) {
@@ -271,7 +295,10 @@ Item {
     if (data && data.meta && data.meta.id) {
       if (!root.focusedGame || data.meta.id === root.focusedGame.id)
         root.selectedMeta = data.meta
+      root.ingestMeta(data.meta)
     }
+    if (data && data.cachedArt)
+      root.ingestCachedArt(data.cachedArt)
     if (data && data.artUpdated > 0)
       root.loadLibraryFromDisk()
   }
@@ -687,10 +714,10 @@ Item {
                   anchors.fill: parent
                   anchors.margins: 3
                   clip: true
-                  source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
+                  source: Model.coverUrl(modelData, Model.lookupMeta(modelData, root.metaById))
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
-                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null)
+                  visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, Model.lookupMeta(modelData, root.metaById))
                 }
 
                 Rectangle {
@@ -701,8 +728,8 @@ Item {
                   Image {
                     id: homeSmallIcon
                     anchors.centerIn: parent
-                    source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
-                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null) && status === Image.Ready
+                    source: Model.coverUrl(modelData, Model.lookupMeta(modelData, root.metaById))
+                    visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, Model.lookupMeta(modelData, root.metaById)) && status === Image.Ready
                     asynchronous: true
                     fillMode: Image.Pad
                     cache: true
@@ -1046,10 +1073,10 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 2
                 clip: true
-                source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
+                source: Model.coverUrl(modelData, Model.lookupMeta(modelData, root.metaById))
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
-                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null)
+                visible: status === Image.Ready && !Model.isSmallArt(modelData, implicitWidth, implicitHeight, Model.lookupMeta(modelData, root.metaById))
               }
 
               Rectangle {
@@ -1060,8 +1087,8 @@ Item {
                 Image {
                   id: librarySmallIcon
                   anchors.centerIn: parent
-                  source: Model.coverUrl(modelData, index === root.selectedIndex ? root.selectedMeta : null)
-                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, index === root.selectedIndex ? root.selectedMeta : null) && status === Image.Ready
+                  source: Model.coverUrl(modelData, Model.lookupMeta(modelData, root.metaById))
+                  visible: Model.isSmallArt(modelData, implicitWidth, implicitHeight, Model.lookupMeta(modelData, root.metaById)) && status === Image.Ready
                   asynchronous: true
                   fillMode: Image.Pad
                   cache: true
@@ -1371,6 +1398,21 @@ Item {
     watchChanges: true
     onFileChanged: root.loadMetaFromDisk()
     onLoaded: root.loadMetaFromDisk()
+  }
+
+  Process {
+    id: cachedArtProcess
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (!text || !String(text).length)
+          return
+        try {
+          var data = JSON.parse(text)
+          if (data && data.cachedArt)
+            root.ingestCachedArt(data.cachedArt)
+        } catch (e) {}
+      }
+    }
   }
 
   Process {

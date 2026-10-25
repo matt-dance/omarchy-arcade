@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from arcade.meta.cache import load_cached, meta_json_path
+from arcade.meta.cache import cached_art_map, load_cached, meta_json_path
 from arcade.meta.keys import load_keys
 from arcade.meta.resolve import apply_art_to_library, resolve_library
 from arcade.model import read_library
@@ -27,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--offline", action="store_true", help="Use cache + local Steam data only")
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--library", type=Path, help="library.json path")
+    parser.add_argument(
+        "--cached-art",
+        action="store_true",
+        help="Print cached cover/hero/logo URIs for every library row (no network)",
+    )
     args = parser.parse_args(argv)
 
     lib_path = args.library or library_path()
@@ -36,6 +41,9 @@ def main(argv: list[str] | None = None) -> int:
 
     library = read_library(lib_path)
     games = library.get("games") or []
+    if args.cached_art:
+        print(json.dumps({"cachedArt": cached_art_map(games), "updated": 0, "ids": []}))
+        return 0
     keys = load_keys()
     for warning in keys.warnings:
         print(warning, file=sys.stderr)
@@ -60,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         "errors": result["errors"],
         "keys": keys.redacted(),
         "offline": bool(args.offline),
+        "cachedArt": cached_art_map(library.get("games") or []),
     }
     if len(args.ids) == 1:
         payload["meta"] = load_cached(args.ids[0]) or {}

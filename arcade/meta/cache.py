@@ -49,6 +49,32 @@ def is_fresh(
     return current - fetched < timedelta(days=max(1, days))
 
 
+def cached_art_map(
+    games: list[Any],
+    cache_dir: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """id → {id, art} for every library row that already has cached cover/hero/logo."""
+    out: dict[str, dict[str, Any]] = {}
+    for game in games or []:
+        if isinstance(game, dict):
+            game_id = str(game.get("id") or "")
+        else:
+            game_id = str(getattr(game, "id", "") or "")
+        if not game_id:
+            continue
+        meta = load_cached(game_id, cache_dir)
+        if not meta:
+            continue
+        art = meta.get("art") or {}
+        if not isinstance(art, dict):
+            continue
+        slots = {key: art[key] for key in ("cover", "hero", "logo") if art.get(key)}
+        if not slots:
+            continue
+        out[game_id] = {"id": game_id, "art": slots}
+    return out
+
+
 def load_cached(game_id: str, cache_dir: Path | None = None) -> dict[str, Any] | None:
     path = meta_json_path(game_id, cache_dir)
     if not path.is_file():

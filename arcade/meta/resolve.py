@@ -414,4 +414,7 @@ def apply_art_to_library(
             if art.get(slot) and game["art"].get(slot) != art[slot]:
                 game["art"][slot] = art[slot]
                 changed += 1
+        if game["art"].get("cover") and game["art"].get("iconOnly"):
+            game["art"]["iconOnly"] = False
+            changed += 1
     return changed

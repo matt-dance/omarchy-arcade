@@ -122,7 +122,7 @@ The binary VDF and text VDF/ACF parsers are about 150 lines of our own code, wit
 3. **ProtonDB** summary API for that appid (Linux compatibility tier).
 4. **Local Steam playtime / last played** from `userdata/<id>/config/localconfig.vdf`.
 5. **IGDB** via Twitch client credentials, only when both keys are set. Used for non-Steam *games* (World of Warcraft, desktop titles) and to fill gaps. Match is exact normalized title only — a contains match would map the Battle.net launcher onto *Warcraft II: Battle.net Edition*. Known launchers (Battle.net, Steam, Lutris, Heroic, EA app, Ubisoft Connect, GOG Galaxy, GeForce NOW client) skip IGDB and get a short launcher description instead.
-6. **SteamGridDB**, only when a key is set. Grid / hero / logo. Preferred over a weak icon-only cover (the WoW `.desktop` icon case, and launchers such as Battle.net). Steam `librarycache` 600×900 art is left alone. The Home card renders `meta.art.cover` when present, even if the library row is still `iconOnly`.
+6. **SteamGridDB**, only when a key is set. Grid / hero / logo. Preferred over a weak icon-only cover (the WoW `.desktop` icon case, and launchers such as Battle.net). Steam `librarycache` 600×900 art is left alone. Every Home and Library card renders `meta.art.cover` when present (from an in-memory `metaById` map hydrated off the disk cache), even if the library row is still `iconOnly`.
 
 Missing sources are skipped; errors are recorded without secrets. `--offline` uses cache + local playtime only. The overlay `FileView`s the selected game's meta JSON and starts `arcade-meta <id>` if it is missing or stale. The service prefetches the eight most recently played games after a scan.
 

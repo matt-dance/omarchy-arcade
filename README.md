@@ -149,7 +149,7 @@ Sources, in order:
 2. **Local Steam** `localconfig.vdf` — playtime and last played per appid.
 3. **ProtonDB** summary (no key) — Linux compatibility tier for Steam appids.
 4. **IGDB** (optional Twitch credentials) — same fields plus a rating, used for non-Steam *games* such as World of Warcraft. Known launchers (Battle.net, Steam, Lutris, Heroic, EA app, Ubisoft Connect, GOG Galaxy, GeForce NOW) skip IGDB — they get a short launcher description instead of a 1990s RTS that happens to contain the word "Battle.net".
-5. **SteamGridDB** (optional key) — high-res grid / hero / logo, preferred over a blurry `.desktop` icon (including the Battle.net launcher). The focused Home card shows that cover when metadata has one.
+5. **SteamGridDB** (optional key) — high-res grid / hero / logo, preferred over a blurry `.desktop` icon (including the Battle.net launcher). Home and Library cards use that cover whenever it is cached, not only on the focused card.
 
 Refresh is rare (14 days). The UI never waits on the network: it shows cache immediately and lets `arcade-meta` update the file in the background.
 

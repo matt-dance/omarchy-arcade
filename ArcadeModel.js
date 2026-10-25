@@ -246,6 +246,36 @@ function coverUrl(game, meta) {
   return ""
 }
 
+function lookupMeta(game, metaById) {
+  if (!game || !game.id || !metaById)
+    return null
+  return metaById[game.id] || null
+}
+
+function rememberMeta(metaById, meta) {
+  var next = {}
+  var src = metaById || {}
+  for (var key in src) {
+    if (Object.prototype.hasOwnProperty.call(src, key))
+      next[key] = src[key]
+  }
+  if (meta && meta.id)
+    next[meta.id] = meta
+  return next
+}
+
+function rememberMetaMap(metaById, entries) {
+  var next = rememberMeta(metaById, null)
+  if (!entries)
+    return next
+  for (var id in entries) {
+    if (!Object.prototype.hasOwnProperty.call(entries, id))
+      continue
+    next = rememberMeta(next, entries[id])
+  }
+  return next
+}
+
 function isIconOnly(game) {
   return !!(game && game.art && game.art.iconOnly)
 }
