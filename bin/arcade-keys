@@ -1,0 +1,177 @@
+#!/usr/bin/python3
+"""Set up the optional IGDB (Twitch) and SteamGridDB keys for Omarchy Arcade.
+
+Keys live in ~/.config/matt-dance.arcade/keys.json (mode 0600). Values are
+read from stdin or the Wayland clipboard, never from argv, and are never
+printed: every command prints booleans or short status words only.
+
+  arcade-keys status
+  arcade-keys set steamgriddb --from-clipboard
+  echo "$KEY" | arcade-keys set twitch-id
+  arcade-keys test
+  arcade-keys remove [steamgriddb|twitch-id|twitch-secret]
+  arcade-keys setup            # interactive, for a terminal
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.meta import keycheck
+from arcade.meta.http import HttpClient
+from arcade.meta.keys import (
+    FIELD_ALIASES,
+    KeyValueError,
+    key_status,
+    load_keys,
+    remove_keys,
+    save_key,
+)
+from arcade.paths import plugin_user_config_dir
+
+SIGNUP = {
+    "steamgriddb": "https://www.steamgriddb.com/profile/preferences/api",
+    "igdb": "https://dev.twitch.tv/console/apps",
+}
+PROMPTS = {
+    "steamgriddb": "SteamGridDB API key",
+    "twitch-id": "Twitch client ID (IGDB)",
+    "twitch-secret": "Twitch client secret (IGDB)",
+}
+
+
+def prompt_marker() -> Path:
+    return plugin_user_config_dir() / "keys-prompt-dismissed"
+
+
+def dismiss_prompt() -> None:
+    marker = prompt_marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+
+
+def status_payload(path: Path | None) -> dict:
+    payload = key_status(path)
+    payload["promptDismissed"] = prompt_marker().exists()
+    payload["signup"] = SIGNUP
+    return payload
+
+
+def read_clipboard() -> str:
+    tool = shutil.which("wl-paste")
+    if not tool:
+        raise KeyValueError("wl-paste not found (install wl-clipboard)")
+    try:
+        out = subprocess.run(
+            [tool, "--no-newline", "--type", "text/plain"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise KeyValueError("could not read the clipboard") from None
+    if out.returncode != 0:
+        raise KeyValueError("clipboard is empty")
+    return out.stdout.decode("utf-8", errors="replace")
+
+
+def after_change(fields: list[str]) -> None:
+    dismiss_prompt()
+    if any(f.startswith("twitch") for f in fields):
+        keycheck.clear_igdb_token()
+
+
+def run_tests(path: Path | None, which: str | None = None) -> dict[str, str]:
+    keys = load_keys(path)
+    http = HttpClient(timeout=10)
+    results: dict[str, str] = {}
+    if which in (None, "steamgriddb"):
+        results["steamgriddb"] = keycheck.check_steamgriddb(keys, http)
+    if which in (None, "igdb"):
+        results["igdb"] = keycheck.check_igdb(keys, http)
+    return results
+
+
+def interactive_setup(path: Path | None) -> int:
+    if not sys.stdin.isatty():
+        print("setup needs a terminal; use `arcade-keys set NAME` with stdin instead", file=sys.stderr)
+        return 2
+    print("Omarchy Arcade works without these keys. They add box art (SteamGridDB)")
+    print("and descriptions for non-Steam games (IGDB). Press Enter to keep the current value.\n")
+    print(f"  SteamGridDB: {SIGNUP['steamgriddb']}")
+    print(f"  IGDB (create a Twitch app, category 'Application Integration'): {SIGNUP['igdb']}\n")
+    current = key_status(path)["fields"]
+    changed: list[str] = []
+    for alias in FIELD_ALIASES:
+        state = "set" if current[alias]["set"] else "not set"
+        value = getpass.getpass(f"{PROMPTS[alias]} [{state}]: ")
+        if not value.strip():
+            continue
+        try:
+            changed.append(save_key(alias, value, path))
+        except KeyValueError as exc:
+            print(f"  skipped: {exc}", file=sys.stderr)
+    if changed:
+        after_change(changed)
+    print("\nTesting…")
+    for provider, result in run_tests(path).items():
+        print(f"  {provider}: {result}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Manage Omarchy Arcade's optional metadata keys")
+    parser.add_argument("--path", type=Path, help="keys.json to use (default: ~/.config/matt-dance.arcade/keys.json)")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status", help="Show which keys are set (booleans only)")
+    p_set = sub.add_parser("set", help="Save one key from stdin or the clipboard")
+    p_set.add_argument("name", choices=list(FIELD_ALIASES))
+    p_set.add_argument("--from-clipboard", action="store_true", help="Read the key with wl-paste")
+    p_test = sub.add_parser("test", help="Check the keys against each API")
+    p_test.add_argument("provider", nargs="?", choices=["steamgriddb", "igdb"])
+    p_rm = sub.add_parser("remove", help="Clear one key, or all keys")
+    p_rm.add_argument("names", nargs="*", help="steamgriddb, twitch-id, twitch-secret (default: all)")
+    sub.add_parser("setup", help="Interactive setup in a terminal")
+    sub.add_parser("dismiss-prompt", help="Hide the first-run keys card on Home")
+    args = parser.parse_args(argv)
+    path = args.path
+
+    if args.cmd == "setup":
+        return interactive_setup(path)
+
+    result: dict = {}
+    code = 0
+    try:
+        if args.cmd == "set":
+            raw = read_clipboard() if args.from_clipboard else sys.stdin.readline()
+            field_name = save_key(args.name, raw, path)
+            after_change([field_name])
+            result["saved"] = args.name
+        elif args.cmd == "remove":
+            cleared = remove_keys(list(args.names), path)
+            after_change(cleared)
+            result["removed"] = [a for a, f in FIELD_ALIASES.items() if f in cleared]
+        elif args.cmd == "test":
+            result["test"] = run_tests(path, args.provider)
+        elif args.cmd == "dismiss-prompt":
+            dismiss_prompt()
+    except KeyValueError as exc:
+        result["error"] = str(exc)
+        code = 1
+    result.update(status_payload(path))
+    print(json.dumps(result, separators=(",", ":")))
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -100,3 +100,117 @@ def load_keys(
         twitch_client_secret=pick("twitch_client_secret", ENV_TWITCH_SECRET),
         warnings=warnings,
     )
+
+
+# Short names used by bin/arcade-keys and the overlay, so the overlay never
+# needs to know the file's field names.
+FIELD_ALIASES = {
+    "steamgriddb": "steamgriddb_api_key",
+    "twitch-id": "twitch_client_id",
+    "twitch-secret": "twitch_client_secret",
+}
+_ENV_FOR_FIELD = {
+    "steamgriddb_api_key": ENV_STEAMGRIDDB,
+    "twitch_client_id": ENV_TWITCH_ID,
+    "twitch_client_secret": ENV_TWITCH_SECRET,
+}
+MAX_KEY_LENGTH = 256
+
+
+class KeyValueError(ValueError):
+    """Bad field name or key value. Messages never include the value."""
+
+
+def resolve_field(name: str) -> str:
+    field_name = FIELD_ALIASES.get(name, name)
+    if field_name not in _FILE_FIELDS:
+        raise KeyValueError(f"unknown key {name!r}; expected one of {', '.join(FIELD_ALIASES)}")
+    return field_name
+
+
+def clean_value(raw: str) -> str:
+    """Trim a pasted key and reject obvious non-keys (multi-line clipboard, prose)."""
+    value = (raw or "").strip().strip("\"'")
+    if not value:
+        raise KeyValueError("empty value")
+    if len(value) > MAX_KEY_LENGTH:
+        raise KeyValueError("value is too long to be an API key")
+    if any(ch.isspace() for ch in value) or not value.isprintable():
+        raise KeyValueError("value contains spaces or control characters")
+    return value
+
+
+def _read_file(path: Path) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_private(path: Path, data: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save_key(name: str, raw_value: str, path: Path | None = None) -> str:
+    """Store one key in keys.json (mode 0600). Returns the canonical field name."""
+    field_name = resolve_field(name)
+    value = clean_value(raw_value)
+    keys_file = path if path is not None else default_keys_path()
+    data = _read_file(keys_file)
+    for known in _FILE_FIELDS:
+        data.setdefault(known, "")
+    data[field_name] = value
+    _write_private(keys_file, data)
+    return field_name
+
+
+def remove_keys(names: list[str] | None = None, path: Path | None = None) -> list[str]:
+    """Blank the given fields (all when ``names`` is empty). Returns cleared fields."""
+    fields = [resolve_field(n) for n in names] if names else list(_FILE_FIELDS)
+    keys_file = path if path is not None else default_keys_path()
+    if not keys_file.is_file():
+        return []
+    data = _read_file(keys_file)
+    for field_name in fields:
+        data[field_name] = ""
+    _write_private(keys_file, data)
+    return fields
+
+
+def key_status(path: Path | None = None, environ: Mapping[str, str] | None = None) -> dict[str, object]:
+    """Which keys are configured — booleans only, safe to print or log."""
+    env = environ if environ is not None else os.environ
+    keys_file = path if path is not None else default_keys_path()
+    keys = load_keys(keys_file, env)
+    fields = {}
+    for alias, field_name in FIELD_ALIASES.items():
+        fields[alias] = {
+            "set": bool(getattr(keys, field_name)),
+            "fromEnv": bool(_clean(env.get(_ENV_FOR_FIELD[field_name], ""))),
+        }
+    return {
+        "steamgriddb": keys.has_steamgriddb,
+        "igdb": keys.has_igdb,
+        "fields": fields,
+        "file": str(keys_file),
+        "warnings": list(keys.warnings),
+    }

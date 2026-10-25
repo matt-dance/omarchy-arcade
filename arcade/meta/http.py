@@ -15,6 +15,10 @@ USER_AGENT = "OmarchyArcade/0.1 (+https://github.com/matt-dance/omarchy-arcade)"
 class HttpError(Exception):
     """Network or HTTP failure. Message must never include secrets or query strings."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 def _safe_host(url: str) -> str:
     try:
@@ -94,6 +98,6 @@ class HttpClient:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return resp.read()
         except urllib.error.HTTPError as exc:
-            raise HttpError(f"HTTP {exc.code} from {_safe_host(url)}") from None
+            raise HttpError(f"HTTP {exc.code} from {_safe_host(url)}", status=exc.code) from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise HttpError(f"request failed: {_safe_host(url)}") from None
