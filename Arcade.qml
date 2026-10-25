@@ -387,6 +387,8 @@ Item {
     }
     if (!data || typeof data !== "object")
       return
+    // The first status read is the baseline, not a change.
+    var known = root.keyStatus.file !== undefined
     var hadSgdb = !!root.keyStatus.steamgriddb
     var hadIgdb = !!root.keyStatus.igdb
     root.keyStatus = data
@@ -402,7 +404,7 @@ Item {
       if (data.test.igdb) parts.push("IGDB: " + data.test.igdb)
       root.keysMessage = parts.join("   ·   ")
     }
-    if ((data.steamgriddb && !hadSgdb) || (data.igdb && !hadIgdb))
+    if (known && ((data.steamgriddb && !hadSgdb) || (data.igdb && !hadIgdb)))
       root.refreshMetaForNewKeys()
   }
 
