@@ -307,6 +307,20 @@ Item {
     return lastX >= 0 && (scenePos.x !== lastX || scenePos.y !== lastY)
   }
 
+  function emptyMessage() {
+    if (root.visibleGames.length || !root.libraryGames().length)
+      return ""
+    if (root.filterText.length)
+      return "No games match \u201c" + root.filterText + "\u201d."
+    if (root.screen !== "library")
+      return ""
+    if (root.libraryTab === "favorites")
+      return "No favorites yet.\nPress R3 (F3) on a game, or X \u2192 Add to favorites."
+    if (root.libraryTab === "hidden")
+      return "No hidden games."
+    return "No games here."
+  }
+
   function loadLibraryFromDisk() {
     var text = ""
     try {
@@ -1316,6 +1330,20 @@ Item {
           clip: true
           model: root.visibleGames
           boundsBehavior: Flickable.StopAtBounds
+
+          Text {
+            parent: grid
+            anchors.centerIn: parent
+            width: Math.min(parent.width, Style.space(560))
+            visible: text.length > 0
+            text: root.emptyMessage()
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+          }
 
           delegate: Item {
             width: grid.cellWidth
