@@ -22,6 +22,11 @@ Item {
     return base + "/matt-dance.arcade"
   }
   readonly property string libraryFile: root.cacheDir + "/library.json"
+  readonly property string userConfigFile: {
+    var xdg = Quickshell.env("XDG_CONFIG_HOME")
+    var home = Quickshell.env("HOME") || ""
+    return ((xdg && xdg.length) ? xdg : (home + "/.config")) + "/omarchy/arcade/arcade.toml"
+  }
   readonly property string daemonBin: root.pluginDir + "/bin/arcaded"
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
@@ -392,11 +397,63 @@ Item {
     root.startDaemon()
     root.loadLibraryFromDisk()
     root.rescan()
+    userConfigProbe.running = true
   }
 
   onManifestChanged: {
     root.log("manifest attached id=" + Model.pluginId(root.manifest))
     root.startDaemon()
+  }
+
+  // arcade.toml edits apply without restarting the shell.
+  FileView {
+    id: userConfigView
+    path: root.userConfigFile
+    watchChanges: true
+    onFileChanged: configReload.restart()
+  }
+
+  Timer {
+    id: configReload
+    interval: 300
+    repeat: false
+    onTriggered: {
+      root.log("arcade.toml changed — reloading bindings")
+      root.sendDaemon({ t: "reload" })
+      if (!userConfigProbe.running)
+        userConfigProbe.running = true
+    }
+  }
+
+  // FileView can't watch a file that doesn't exist yet. Until arcade.toml
+  // appears, check for it every few seconds and load it once it does.
+  property bool userConfigMissing: false
+
+  Process {
+    id: userConfigProbe
+    command: ["/usr/bin/test", "-e", root.userConfigFile]
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        userConfigPoll.stop()
+        if (root.userConfigMissing) {
+          root.userConfigMissing = false
+          root.log("arcade.toml created — loading bindings")
+          userConfigView.reload()
+          root.sendDaemon({ t: "reload" })
+        }
+      } else {
+        root.userConfigMissing = true
+        if (!userConfigPoll.running)
+          userConfigPoll.start()
+      }
+    }
+  }
+
+  Timer {
+    id: userConfigPoll
+    interval: 3000
+    repeat: true
+    onTriggered: if (!userConfigProbe.running) userConfigProbe.running = true
   }
 
   FileView {

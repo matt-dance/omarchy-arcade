@@ -61,7 +61,8 @@ omarchy plugin remove matt-dance.arcade
 - **Home:** horizontal row of larger covers (recently played first, then the rest of the library). The focused card scales up. The details pane below shows hero/banner art, title, source badges including merged **Play on…** stores, last played or playtime, and **Play** / **Options**
 - **Browse Home:** D-pad left/right along the row, down into Play/Options, up back to the row. `A` plays, `X` opens Options (Play on… picker)
 - **Library:** `LB` / `RB` / Tab keeps the grid
-- **Search:** `Y` / `/` then type
+- **Search:** `Y` opens an on-screen keyboard (D-pad/stick to move, `A` types, `X` deletes, `Y` adds a space, `Start` keeps the results, `B` cancels). On a keyboard, `/` or just start typing; Enter launches the top result and Esc clears
+- **Held input:** holding the D-pad or tilting the left stick repeats focus moves (deadzone: `stick_deadzone` in `arcade.toml`). `LT` / `RT` page through the grid
 - **Settings:** `Start` / `M`
 - **Close Arcade:** `B` / Esc from the Home row
 - **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). The same menu opens from the desktop or while Arcade is already up via `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'`. Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
@@ -265,7 +266,7 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live
 3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
-5. **Controller nav** — D-pad and stick move focus; A launches; B backs; Home left/right along the shelf
+5. **Controller nav** — D-pad and left stick move focus; holding either repeats after a short delay and stops on release; A launches; B backs; Home left/right along the shelf; `Y` opens the on-screen keyboard and typing filters live; editing `~/.config/omarchy/arcade/arcade.toml` logs `arcade.toml changed — reloading bindings`
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
 7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
 8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…` with no empty `JSON.parse` warning. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
