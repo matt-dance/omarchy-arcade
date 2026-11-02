@@ -15,32 +15,52 @@ if str(ROOT) not in sys.path:
 from arcade.hypr import NAMESPACE, apply_layer_blur, list_layer_namespaces
 
 
+def _add_namespace(parser: argparse.ArgumentParser, *, default: str | None) -> None:
+    # QML builds `apply --namespace matt-dance-arcade` (flag after the
+    # subcommand). Parent-level --namespace alone is rejected by argparse.
+    kwargs: dict = {"help": "WlrLayershell namespace (default: matt-dance-arcade)"}
+    if default is None:
+        kwargs["default"] = argparse.SUPPRESS
+    else:
+        kwargs["default"] = default
+    parser.add_argument("--namespace", **kwargs)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Arcade Hyprland layer blur helper")
-    parser.add_argument("--namespace", default=NAMESPACE)
+    _add_namespace(parser, default=NAMESPACE)
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_apply = sub.add_parser("apply", help="Push layerrules (and enable decoration blur if needed)")
+    _add_namespace(p_apply, default=None)
     p_apply.add_argument("--off", action="store_true", help="Disable blur for the overlay namespace")
     p_apply.add_argument(
         "--restore-decoration",
         action="store_true",
         help="Turn decoration.blur back off (only after Arcade enabled it)",
     )
-    sub.add_parser("status", help="Print live layer namespaces")
+    p_status = sub.add_parser("status", help="Print live layer namespaces")
+    _add_namespace(p_status, default=None)
 
     args = parser.parse_args(argv)
+    namespace = getattr(args, "namespace", NAMESPACE)
     if args.cmd == "status":
         data = {
-            "namespace": args.namespace,
+            "namespace": namespace,
             "namespaces": list_layer_namespaces(),
         }
-    else:
-        data = apply_layer_blur(
-            enabled=not args.off,
-            namespace=args.namespace,
-            restore_decoration=args.restore_decoration,
-        )
+        print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        return 0
+
+    data = apply_layer_blur(
+        enabled=not args.off,
+        namespace=namespace,
+        restore_decoration=args.restore_decoration,
+    )
     print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    # Non-zero when frost was requested but is not available so QML can
+    # raise the 0.7 fallback fill instead of staying optimistic.
+    if data.get("wanted") and not data.get("active"):
+        return 1
     return 0
 
 

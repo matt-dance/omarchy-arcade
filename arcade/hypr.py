@@ -3,9 +3,13 @@
 Omarchy themes often ship ``decoration.blur.enabled = false``. A layer
 rule alone then does nothing. This helper:
 
-- applies 0.53+ ``match:namespace`` rules and the older ``blur, ns`` form
+- applies Hyprland 0.53+ ``match:namespace`` rules (and the older ``blur, ns``)
 - turns decoration blur on while Arcade is open if it was off
 - reports the live ``hyprctl layers`` namespaces so QML can log them
+
+Hyprland 0.56 config is Lua ``hl.layer_rule({ match = { namespace = … },
+blur = true, ignore_alpha = 0.2 })`` (see ``hypr/arcade.lua``). Do **not**
+query ``hyprctl -j layerrules`` — that request is unknown on 0.56.2.
 """
 
 from __future__ import annotations
@@ -17,7 +21,11 @@ from typing import Any
 NAMESPACE = "matt-dance-arcade"
 FALLBACK_OPACITY = 0.7
 
+# 0.53+ / keyword form. 0.56 prefers the Lua named rule in arcade.lua;
+# these are the documented hyprctl keyword equivalents (effects may be
+# combined or split). `hyprctl -j layerrules` is unknown — never query it.
 _NEW_RULES_ON = (
+    "blur on, ignore_alpha 0.2, xray off, match:namespace {ns}",
     "blur on, match:namespace {ns}",
     "ignore_alpha 0.2, match:namespace {ns}",
     "xray off, match:namespace {ns}",
@@ -27,6 +35,7 @@ _OLD_RULES_ON = (
     "ignorealpha 0.2, {ns}",
 )
 _NEW_RULES_OFF = (
+    "blur off, ignore_alpha 1, match:namespace {ns}",
     "blur off, match:namespace {ns}",
     "ignore_alpha 1, match:namespace {ns}",
 )

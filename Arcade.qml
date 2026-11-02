@@ -66,7 +66,7 @@ Item {
   property string searchReturnScreen: "home"
   property var fileAppearance: Model.defaultAppearance()
   property int settingsIndex: 0
-  property bool hyprBlurActive: true
+  property bool hyprBlurActive: false
   property bool hyprEnabledDecoration: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
@@ -2735,8 +2735,11 @@ Item {
       }
     }
     onExited: function(exitCode, exitStatus) {
-      if (exitCode !== 0)
-        console.warn("matt-dance.arcade: arcade-hypr exited " + exitCode)
+      if (exitCode !== 0) {
+        root.hyprBlurActive = false
+        console.warn("matt-dance.arcade: arcade-hypr exited " + exitCode
+                     + " frost unavailable — using fallback fill")
+      }
     }
   }
 

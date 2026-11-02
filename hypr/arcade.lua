@@ -11,11 +11,22 @@ o.bind("XF86Game", "Arcade", "omarchy-shell shell toggle matt-dance.arcade '{}'"
 
 -- Frost the desktop behind Arcade. WlrLayershell.namespace in Arcade.qml is
 -- "matt-dance-arcade" (QuickMenu uses "matt-dance-arcade-quickmenu"). The
--- match is a regex, so one rule covers both. Hyprland 0.53+ wants
--- hl.layer_rule; keyword layerrule is the runtime fallback Arcade also
--- applies when the overlay opens. Many Omarchy themes ship
+-- match is a regex, so one rule covers both.
+--
+-- Hyprland 0.56 (Lua config) wants a named hl.layer_rule:
+--   hl.layer_rule({
+--     name = "…",
+--     match = { namespace = "matt-dance-arcade" },  -- regex
+--     blur = true,
+--     ignore_alpha = 0.2,  -- 0.0–1.0; skip pixels at or below this alpha
+--     xray = false,
+--   })
+-- See wiki Configuring / Layer rules. `hyprctl -j layerrules` is an
+-- unknown request on 0.56.2 — do not query it. keyword layerrule is a
+-- best-effort runtime fallback (0.53+ `blur on, match:namespace` plus the
+-- older `blur, ns` form). Many Omarchy themes ship
 -- decoration.blur.enabled = false — layer rules then do nothing until
--- Arcade turns decoration blur on for the session.
+-- Arcade turns decoration blur on for the session and restores it on close.
 local ARCADE_NS = "matt-dance-arcade"
 
 pcall(function()

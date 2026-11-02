@@ -247,14 +247,14 @@ Edits reload live, same as bindings. Settings (`Start`) exposes opacity, blur, t
 
 `bin/arcade-config show` prints the merged table. `bin/arcade-config set background_opacity 0.35` writes the user override.
 
-Hyprland frost needs three things: the layer namespace (`WlrLayershell.namespace` = `matt-dance-arcade`, logged as `matt-dance.arcade: layer namespace=…`), a `layerrule` for that name, and `decoration.blur.enabled`. Many Omarchy themes ship blur **off**. On open, Arcade:
+Hyprland frost needs three things: the layer namespace (`WlrLayershell.namespace` = `matt-dance-arcade`, logged as `matt-dance.arcade: layer namespace=…`), a layer rule for that name, and `decoration.blur.enabled`. Many Omarchy themes ship blur **off**. On open, Arcade:
 
 1. Logs the QML namespace and `hyprctl layers` names
-2. Applies `hl.layer_rule` from `arcade.lua` **and** `hyprctl keyword layerrule` (`blur on, match:namespace matt-dance-arcade` plus the older `blur, ns` form)
-3. Turns decoration blur on for the session if it was off (restored when Arcade closes)
-4. If frost still is not available, raises the fill to at least **0.7** and darkens card scrims so sharp windows behind stay readable
+2. Applies the Hyprland 0.56 Lua rule from `arcade.lua` (`hl.layer_rule({ match = { namespace = "matt-dance-arcade" }, blur = true, ignore_alpha = 0.2 })`) **and** `hyprctl keyword layerrule` (`blur on, match:namespace matt-dance-arcade` plus the older `blur, ns` form)
+3. Turns decoration blur on for the session if it was off (restored when Arcade closes via `--off --restore-decoration`)
+4. If `arcade-hypr` exits non-zero or reports `active: false`, raises the fill to at least **0.7** and darkens card scrims so sharp windows behind stay readable
 
-`bin/arcade-hypr apply` is the helper. Settings shows **On (no frost)** when the fallback fill is in use.
+`bin/arcade-hypr apply --namespace matt-dance-arcade` is the helper (flag after the subcommand — the same argv QML builds). Do not query `hyprctl -j layerrules`; that request is unknown on Hyprland 0.56.2. Settings shows **On (no frost)** when the fallback fill is in use.
 
 ## Layout
 
