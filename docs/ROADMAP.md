@@ -227,4 +227,4 @@ applies FileView JSON when `parsed.id` matches the focused game (the
 `meta loaded id=… file=…` mismatch was a stale-FileView race, not a
 wrong cache file).
 
-**Status: Done (this PR).**
+**Status: Done in [#12](https://github.com/matt-dance/omarchy-arcade/pull/12) (GFN watch + meta FileView race).**
