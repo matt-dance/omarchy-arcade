@@ -180,3 +180,27 @@ Cross/Circle/Square/Triangle for PlayStation pads and swap the A/B labels for
 Nintendo pads.
 
 **Status: Planned.**
+
+## 11. Library only refreshes on a manual rescan (bug, high)
+
+**Problem.** `library.json` was written only when the user hit F5, called
+`rescan`, or the service started. Installing Mass Effect Legendary Edition
+via Steam (appid 1328670, `.desktop` under `~/.local/share/applications`)
+on Oct 28 never appeared because the cache had last been written Oct 25.
+
+**Change.** `arcaded` watches every enabled source (each Steam
+`steamapps/` from `libraryfolders.vdf`, Heroic/Legendary `installed.json`,
+Lutris db/config, Bottles, itch, applications + Flatpak exports, RetroArch
+playlists, `~/Games/roms` when enabled). It prefers inotify (`watchdog` or
+`pyinotify` if present, else ctypes inotify) and falls back to a cheap
+mtime/listing poll about every 30 s. Events debounce 3–5 s so Steam's
+repeated manifest writes during a download coalesce. A Steam game is
+installed only when `StateFlags` has Fully Installed (bit 4). The daemon
+also rescans at startup and when the overlay opens if the cache is older
+than `stale_minutes`. The existing `Service.qml` `rescan()` path writes
+`library.json`, the overlay updates live (selection stays put), and
+`arcade-art` / `arcade-meta` fetch in the background. Removed games leave
+the library; favorites and play history stay in `state.json`. `[library]`
+in `arcade.toml` can turn watching off or set the poll interval.
+
+**Status: Done (this PR).**

@@ -37,7 +37,8 @@ _PROTON_TOOL_RE = re.compile(
 )
 
 
-def _library_folders(root: Path) -> list[Path]:
+def library_folders(root: Path) -> list[Path]:
+    """Steam library roots: the install root plus extra folders from libraryfolders.vdf."""
     vdf = root / "steamapps" / "libraryfolders.vdf"
     folders = [root]
     if not vdf.is_file():
@@ -94,11 +95,42 @@ def _is_steam_tool(app: dict, appid: int, name: str) -> bool:
     return False
 
 
+def parse_state_flags(value: object) -> int:
+    """Parse an ACF StateFlags field to an int. Invalid / missing → 0."""
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value if value >= 0 else 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    try:
+        flags = int(text, 10)
+    except ValueError:
+        try:
+            flags = int(text, 0)
+        except ValueError:
+            return 0
+    return flags if flags >= 0 else 0
+
+
+# SteamKit AppState StateFlags: bit 2 (value 4) = Fully Installed.
+STEAM_STATE_FULLY_INSTALLED = 4
+
+
+def manifest_is_installed(manifest: dict | None) -> bool:
+    """True only when StateFlags includes Fully Installed — not mid-download."""
+    if not isinstance(manifest, dict):
+        return False
+    flags = parse_state_flags(manifest.get("StateFlags") or manifest.get("stateflags"))
+    return bool(flags & STEAM_STATE_FULLY_INSTALLED)
+
+
 def installed_app_ids() -> set[int]:
     """Appids with a fully-installed appmanifest (for desktop wrapper checks)."""
     ids: set[int] = set()
     for root in steam_roots():
-        for library in _library_folders(root):
+        for library in library_folders(root):
             apps = library / "steamapps"
             if not apps.is_dir():
                 continue
@@ -120,13 +152,7 @@ def installed_app_ids() -> set[int]:
 
 
 def _manifest_installed(manifest: dict) -> bool:
-    state = manifest.get("StateFlags") or manifest.get("stateflags") or "0"
-    try:
-        flags = int(state)
-    except ValueError:
-        return False
-    # Bit 2 (4) = Fully Installed
-    return bool(flags & 4)
+    return manifest_is_installed(manifest)
 
 
 def _hero_for(root: Path, appid: int) -> str | None:
@@ -181,7 +207,7 @@ def _cover_for(root: Path, appid: int) -> str | None:
 
 def _scan_manifests(root: Path, playtimes: dict) -> list[Game]:
     games: list[Game] = []
-    for library in _library_folders(root):
+    for library in library_folders(root):
         apps = library / "steamapps"
         for acf in apps.glob("appmanifest_*.acf"):
             try:

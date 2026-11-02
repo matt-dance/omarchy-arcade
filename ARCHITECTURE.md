@@ -10,12 +10,12 @@ omarchy-shell (Quickshell, Qt 6, one long-lived process)
     ├── Service.qml       kind: service, keepLoaded
     │   ├── IpcHandler target "matt-dance.arcade": toggle | open | close | rescan | status | action <name>
     │   ├── Process: bin/arcaded --exit-with-stdin   (long-lived, JSON lines both ways)
-    │   ├── Process: bin/arcade-scan --json          (one-shot, on open/rescan/file change)
+    │   ├── Process: bin/arcade-scan --json          (one-shot, on open/rescan/watch/stale)
     │   ├── Process: bin/arcade-art <ids…>           (one-shot batches, low priority)
     │   ├── Process: bin/arcade-meta <ids…>          (one-shot, metadata cache, never on the UI thread)
     │   ├── Hyprland event stream (Quickshell.Hyprland) for window open/close/focus
     │   ├── IdleInhibitor while Arcade is open or a tracked game runs
-    │   └── FileView watches: arcade.toml, library sources, theme changes are automatic
+    │   └── FileView watches: arcade.toml, library.json; source dirs are watched in arcaded
     ├── Arcade.qml        kind: overlay   full-screen library on the overlay layer
     │                     also reads library.json + runs arcade-scan if the service is absent
     └── QuickMenu.qml     in-game side sheet (child of Arcade.qml, not a plugin kind)
@@ -25,7 +25,8 @@ bin/arcaded (Python 3 stdlib)
 ├── combos/    chord recogniser: tap, hold, repeat, chord window, latch-until-release
 ├── session/   launch through systemd-run scope, pidfd exit wait, Steam reaper watch
 ├── uinput/    optional virtual keyboard, only for bindings with `keys =`
-└── config/    tomllib loader, defaults + user merge, validation report
+├── config/    tomllib loader, defaults + user merge, validation report
+└── watch/     inotify (watchdog / pyinotify / ctypes) or ~30 s poll on scanner dirs
 ```
 
 ### Why this split
@@ -51,6 +52,8 @@ Daemon to service:
 {"t":"session","state":"running","game":"steam:1245620","pid":5678}
 {"t":"session","state":"exited","game":"steam:1245620","code":0,"seconds":3121}
 {"t":"config","ok":false,"errors":["bindings.\"GUIDE + Q\": unknown button Q"]}
+{"t":"watch","backend":"inotify","paths":8,"auto":true}
+{"t":"rescan","reason":"watch"}           // startup | open | watch — service runs arcade-scan
 ```
 
 Service to daemon:

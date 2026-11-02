@@ -73,6 +73,34 @@ omarchy plugin remove matt-dance.arcade
 
 ### Rescan
 
+Arcade watches your game sources while `arcaded` is running and rescans a few
+seconds after Steam, Heroic, Legendary, Lutris, Bottles, itch, `.desktop`
+files (including Flatpak exports), RetroArch playlists, or `~/Games/roms`
+(when enabled) change. Newly installed games appear without a manual rescan;
+uninstalled games disappear. Favorites, hidden flags, and play history stay in
+`state.json`, so a reinstall restores them.
+
+A Steam title is listed only once its `appmanifest_*.acf` `StateFlags` includes
+Fully Installed (bit 4), so games still downloading do not show up early.
+Metadata and box art for new games are fetched in the background
+(`arcade-meta` / `arcade-art`) and never block the overlay. That path works
+with no IGDB or SteamGridDB keys.
+
+Arcade also rescans when `arcaded` starts and when you open the overlay if the
+last scan is older than `stale_minutes`.
+
+In `~/.config/omarchy/arcade/arcade.toml`:
+
+```toml
+[library]
+auto_watch = true          # set false to disable watching (startup/open refresh still runs)
+debounce_s = 4             # wait after the last filesystem event
+poll_interval_s = 30       # used when inotify is unavailable; also re-probes new source dirs
+stale_minutes = 15         # rescan on open if the cache is older than this
+```
+
+Manual rescan still works:
+
 ```bash
 omarchy-shell shell call matt-dance.arcade rescan '{}'
 # or from a checkout:
@@ -298,7 +326,8 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 15. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 14. **Favorites, hide, sort** — `R3` stars a game (star on the card, it moves into the favorites block on Home and focus stays on it); `X` → Hide removes it from Home/Library/Search and it appears under the Hidden tab; `Select` changes the Library order and survives closing Arcade; `~/.local/state/matt-dance.arcade/state.json` reflects each change
 15. **Play history** — play a GeForce NOW or Battle.net game for a few minutes and quit; on reopen it is first on Home and the details pane shows the playtime
-16. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+16. **Auto library watch** — with Arcade closed or open, finish a Steam/Heroic install: the title appears within ~5 s (`Added: …` in the journal) without F5. A download in progress must not appear until `StateFlags` is fully installed. Uninstall removes the card; a reinstall keeps favorites/play history. Opening Arcade after the cache is older than `stale_minutes` rescans. `auto_watch = false` stops live updates; F5 still works.
+17. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
 
 ## Design docs
 

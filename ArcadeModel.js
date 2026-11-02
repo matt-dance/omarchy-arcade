@@ -29,7 +29,8 @@ function parseLibraryText(text) {
       games: games,
       errors: data.errors || [],
       ok: true,
-      empty: games.length === 0
+      empty: games.length === 0,
+      scannedAt: data.scannedAt || data.scanned_at || ""
     }
   } catch (e) {
     return { games: [], errors: [], ok: false, empty: true, error: String(e) }
