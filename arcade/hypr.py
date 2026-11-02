@@ -26,6 +26,7 @@ import os
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 NAMESPACE = "matt-dance-arcade"
@@ -192,14 +193,47 @@ def decoration_blur_size() -> int | None:
     return None
 
 
-def _lock_path() -> str:
+def _runtime_dir() -> Path:
     runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return os.path.join(runtime, "matt-dance-arcade-hypr.lock")
+    return Path(runtime) / "matt-dance.arcade"
+
+
+def orig_path() -> Path:
+    return _runtime_dir() / "blur-orig"
+
+
+def read_orig() -> bool | None:
+    try:
+        text = orig_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    line = (text.splitlines()[0] if text.strip() else "").strip()
+    return _as_bool(line)
+
+
+def write_orig(value: bool) -> None:
+    path = orig_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".orig.tmp")
+    tmp.write_text("true\n" if value else "false\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def clear_orig() -> None:
+    try:
+        orig_path().unlink()
+    except OSError:
+        pass
+
+
+def _lock_path() -> str:
+    return str(_runtime_dir() / "hypr.lock")
 
 
 @contextmanager
 def apply_lock() -> Iterator[None]:
     path = _lock_path()
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+", encoding="utf-8")
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
@@ -357,13 +391,24 @@ def _apply_layer_blur_locked(
     setter = _Setter()
     flipped = False
 
-    if restore_decoration and not enabled:
-        # QML only sends --restore-decoration when Arcade flipped blur on.
-        setter.apply(
-            ["decoration:blur:enabled", "false"],
-            decoration_enabled_lua(False),
-            "decoration:blur:enabled false",
-        )
+    saved = read_orig()
+    if enabled and saved is None:
+        # Remember the user's value across processes. QML / flock / a new
+        # arcade-hypr pid cannot keep "we flipped it" in memory.
+        saved = False if original is not True else True
+        write_orig(saved)
+
+    restore_to: bool | None = None
+    if not enabled:
+        restore_to = saved
+        if restore_to is None and restore_decoration:
+            restore_to = False
+        if restore_to is not None:
+            setter.apply(
+                ["decoration:blur:enabled", "true" if restore_to else "false"],
+                decoration_enabled_lua(restore_to),
+                f"decoration:blur:enabled {'true' if restore_to else 'false'}",
+            )
 
     # Idempotent: enable whenever wanted and getoption is not actually true.
     # A previous parse of ``set: true`` used to skip this and leave blur off.
@@ -420,13 +465,19 @@ def _apply_layer_blur_locked(
         setter.errors.append("decoration:blur:enabled is not true after apply")
     elif enabled and decoration is not True:
         setter.errors.append("decoration:blur:enabled is not true after apply")
+    if not enabled and restore_to is not None and decoration is not restore_to:
+        setter.errors.append(
+            f"decoration:blur:enabled is not {str(restore_to).lower()} after restore"
+        )
+    elif not enabled and restore_to is not None and decoration is restore_to:
+        clear_orig()
 
     live_after = list_layer_namespaces() or live
     matched = [item for item in live_after if any(t in item for t in targets)]
     active = bool(enabled and decoration is True)
 
     return {
-        "ok": (not enabled) or active,
+        "ok": active if enabled else (restore_to is None or decoration is restore_to),
         "wanted": enabled,
         "active": active,
         "parser": "eval" if setter.use_eval else "keyword",
@@ -437,8 +488,16 @@ def _apply_layer_blur_locked(
         "applied": setter.applied,
         "decorationBlur": decoration,
         "decorationWas": original,
+        "decorationOrig": saved,
         "enabledDecorationBlur": flipped,
         "getoptionRaw": getoption_raw or original_raw,
         "fallbackOpacity": FALLBACK_OPACITY,
         "errors": setter.errors[:8],
     }
+
+
+def restore_if_saved() -> dict[str, Any] | None:
+    """Restore decoration blur from blur-orig (daemon / shell exit)."""
+    if read_orig() is None:
+        return None
+    return apply_layer_blur(False)

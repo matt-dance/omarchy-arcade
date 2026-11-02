@@ -5,8 +5,10 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -17,7 +19,9 @@ from arcade.hypr import (
     NAMESPACE,
     apply_layer_blur,
     collect_namespaces,
+    orig_path,
     parse_getoption,
+    restore_if_saved,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -145,7 +149,16 @@ class TestParseGetoption(unittest.TestCase):
         self.assertIsNone(parse_getoption('{"set": true}'))
 
 
-class TestApplyLayerBlur(unittest.TestCase):
+class IsolatedRuntime:
+    def setUp(self):
+        self._runtime = tempfile.TemporaryDirectory()
+        self.addCleanup(self._runtime.cleanup)
+        env = mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": self._runtime.name})
+        env.start()
+        self.addCleanup(env.stop)
+
+
+class TestApplyLayerBlur(IsolatedRuntime, unittest.TestCase):
     def test_applies_new_and_old_syntax_and_enables_decoration(self):
         fake = FakeHypr(parser="keyword", blur=0)
 
@@ -238,6 +251,35 @@ class TestApplyLayerBlur(unittest.TestCase):
         self.assertTrue(any("enabled=false" in r for r in result["applied"]))
         self.assertTrue(any("blur=false" in r or "set_enabled" in r for r in result["applied"]))
 
+    def test_open_then_close_restores_original_false(self):
+        """Hardware: before open bool false; after close it must be false again."""
+        fake = FakeHypr(parser="eval", blur=0)
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            opened = apply_layer_blur(True, namespace=NAMESPACE)
+
+        self.assertTrue(opened["active"])
+        self.assertEqual(fake.blur, 1)
+        self.assertEqual(orig_path().read_text(encoding="utf-8").strip(), "false")
+        self.assertFalse(opened["decorationOrig"])
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            # Close without --restore-decoration: the saved orig must be enough.
+            closed = apply_layer_blur(False, namespace=NAMESPACE)
+
+        self.assertFalse(closed["wanted"])
+        self.assertFalse(closed["active"])
+        self.assertFalse(closed["decorationBlur"])
+        self.assertEqual(fake.blur, 0)
+        self.assertTrue(any("enabled=false" in r for r in closed["applied"]))
+        self.assertFalse(orig_path().exists())
+
+    def test_restore_if_saved_noop_without_file(self):
+        fake = FakeHypr(parser="eval", blur=1)
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            self.assertIsNone(restore_if_saved())
+        self.assertEqual(fake.blur, 1)
+
     def test_plain_bool_false_set_true_is_inactive(self):
         fake = FakeHypr(
             parser="eval",
@@ -267,7 +309,7 @@ class TestApplyLayerBlur(unittest.TestCase):
         self.assertTrue(result["decorationBlur"])
 
 
-class TestArcadeHyprCli(unittest.TestCase):
+class TestArcadeHyprCli(IsolatedRuntime, unittest.TestCase):
     """QML builds `apply --namespace …` after the subcommand. That must parse."""
 
     QML_OPEN = ["apply", "--namespace", "matt-dance-arcade"]
@@ -371,7 +413,14 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("hyprBlurPending", qml)
         self.assertIn("getoptionRaw", qml)
         self.assertIn('"apply", "--namespace", root.layerNamespace', qml)
-        self.assertIn("--restore-decoration", qml)
+        self.assertIn('args.push("--restore-decoration")', qml)
+        self.assertNotIn("if (root.hyprEnabledDecoration)", qml)
+        service = (ROOT / "Service.qml").read_text(encoding="utf-8")
+        self.assertIn("Component.onDestruction", service)
+        self.assertIn("apply", service)
+        self.assertIn("--off", service)
+        daemon = (ROOT / "arcade" / "daemon.py").read_text(encoding="utf-8")
+        self.assertIn("restore_if_saved", daemon)
         self.assertIn("surfaceFormat.opaque: false", qml)
         self.assertIn("WlrLayershell.namespace: root.layerNamespace", qml)
         self.assertIn('readonly property string layerNamespace: "matt-dance-arcade"', qml)
@@ -389,6 +438,8 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("probe_uses_eval", hypr_py)
         self.assertIn("parse_getoption", hypr_py)
         self.assertIn("Never treat", hypr_py)
+        self.assertIn("blur-orig", hypr_py)
+        self.assertIn("restore_if_saved", hypr_py)
         menu = (ROOT / "QuickMenu.qml").read_text(encoding="utf-8")
         self.assertIn("surfaceFormat.opaque: false", menu)
         self.assertIn('WlrLayershell.namespace: "matt-dance-arcade-quickmenu"', menu)

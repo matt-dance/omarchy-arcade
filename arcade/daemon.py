@@ -426,71 +426,78 @@ class ArcadeDaemon:
         buf = ""
         last_device_scan = 0.0
 
-        while self._running:
-            now = time.monotonic()
-            if now - last_device_scan > 2.0:
-                self.refresh_devices()
-                last_device_scan = now
+        try:
+            while self._running:
+                now = time.monotonic()
+                if now - last_device_scan > 2.0:
+                    self.refresh_devices()
+                    last_device_scan = now
 
-            for act in self.engine.tick(now):
-                self._handle_activation(act.binding, act.reason)
+                for act in self.engine.tick(now):
+                    self._handle_activation(act.binding, act.reason)
 
-            repeated = self.nav.tick(now)
-            if repeated:
-                self._emit_nav(repeated, True)
+                repeated = self.nav.tick(now)
+                if repeated:
+                    self._emit_nav(repeated, True)
 
-            changed = self.tracker.poll(now)
-            if changed is not None:
-                emit({"t": "session", **changed.to_dict()})
-                if changed.state in ("exited", "lost"):
-                    self._record_session_end(changed)
-                    self.tracker.clear()
+                changed = self.tracker.poll(now)
+                if changed is not None:
+                    emit({"t": "session", **changed.to_dict()})
+                    if changed.state in ("exited", "lost"):
+                        self._record_session_end(changed)
+                        self.tracker.clear()
 
-            deadlines = [d for d in (self.engine.next_deadline(), self.nav.next_deadline()) if d is not None]
-            timeout = 0.05
-            if deadlines:
-                timeout = max(0.0, min(timeout, min(deadlines) - now))
+                deadlines = [d for d in (self.engine.next_deadline(), self.nav.next_deadline()) if d is not None]
+                timeout = 0.05
+                if deadlines:
+                    timeout = max(0.0, min(timeout, min(deadlines) - now))
 
-            rlist = list(self._fds.keys()) + [stdin_fd]
-            try:
-                readable, _, _ = select.select(rlist, [], [], timeout)
-            except InterruptedError:
-                continue
-
-            if stdin_fd in readable:
+                rlist = list(self._fds.keys()) + [stdin_fd]
                 try:
-                    chunk = os.read(stdin_fd, 65536)
-                except BlockingIOError:
-                    chunk = b""
-                if not chunk:
-                    if self.exit_with_stdin:
-                        self._running = False
-                        break
-                else:
-                    buf += chunk.decode("utf-8", errors="replace")
-                    while "\n" in buf:
-                        line, buf = buf.split("\n", 1)
-                        self._handle_stdin_line(line)
-
-            for fd in readable:
-                if fd == stdin_fd:
+                    readable, _, _ = select.select(rlist, [], [], timeout)
+                except InterruptedError:
                     continue
-                info = self._fds.get(fd)
-                if info:
-                    try:
-                        self._handle_events(fd, info)
-                    except OSError:
-                        try:
-                            os.close(fd)
-                        except OSError:
-                            pass
-                        self._fds.pop(fd, None)
 
-        self.keyboard.close()
-        for fd in list(self._fds):
+                if stdin_fd in readable:
+                    try:
+                        chunk = os.read(stdin_fd, 65536)
+                    except BlockingIOError:
+                        chunk = b""
+                    if not chunk:
+                        if self.exit_with_stdin:
+                            self._running = False
+                            break
+                    else:
+                        buf += chunk.decode("utf-8", errors="replace")
+                        while "\n" in buf:
+                            line, buf = buf.split("\n", 1)
+                            self._handle_stdin_line(line)
+
+                for fd in readable:
+                    if fd == stdin_fd:
+                        continue
+                    info = self._fds.get(fd)
+                    if info:
+                        try:
+                            self._handle_events(fd, info)
+                        except OSError:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            self._fds.pop(fd, None)
+        finally:
+            self.keyboard.close()
+            for fd in list(self._fds):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
-                os.close(fd)
-            except OSError:
+                from .hypr import restore_if_saved
+
+                restore_if_saved()
+            except Exception:
                 pass
         return 0
 

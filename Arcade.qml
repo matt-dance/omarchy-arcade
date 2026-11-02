@@ -299,8 +299,7 @@ Item {
     var args = ["/usr/bin/python3", root.hyprBin, "apply", "--namespace", root.layerNamespace]
     if (!root.opened || !root.appearance.blur) {
       args.push("--off")
-      if (root.hyprEnabledDecoration)
-        args.push("--restore-decoration")
+      args.push("--restore-decoration")
     }
     if (hyprBlurProcess.running) {
       root.hyprBlurPending = args

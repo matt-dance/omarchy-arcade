@@ -31,6 +31,7 @@ Item {
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
   readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
+  readonly property string hyprBin: root.pluginDir + "/bin/arcade-hypr"
 
   property var games: []
   property var scanErrors: []
@@ -409,6 +410,11 @@ Item {
     userConfigProbe.running = true
   }
 
+  Component.onDestruction: {
+    restoreHypr.command = root.pythonCmd(root.hyprBin, ["apply", "--off"])
+    restoreHypr.running = true
+  }
+
   onManifestChanged: {
     root.log("manifest attached id=" + Model.pluginId(root.manifest))
     root.startDaemon()
@@ -475,6 +481,7 @@ Item {
 
   Process { id: notifyProcess }
   Process { id: inhibitProcess }
+  Process { id: restoreHypr }
 
   Process {
     id: scanProcess
