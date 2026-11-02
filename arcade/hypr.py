@@ -20,9 +20,13 @@ maps; do not gate frost on ``matched``.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import subprocess
-from typing import Any
+import tempfile
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 NAMESPACE = "matt-dance-arcade"
 RULE_NAME = "matt-dance-arcade-blur"
@@ -87,41 +91,122 @@ def probe_uses_eval() -> bool:
     return response_wants_eval(out, err)
 
 
-def _parse_option(text: str) -> Any:
+def _as_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in ("true", "yes", "on", "1"):
+        return True
+    if text in ("false", "no", "off", "0"):
+        return False
+    return None
+
+
+def parse_getoption(text: str) -> bool | None:
+    """Read decoration:blur:enabled from hyprctl getoption.
+
+    Hyprland prints ``bool: false\\nset: true`` (and JSON
+    ``{"bool": false, "set": true}``). ``set`` means "configured by the
+    user", **not** the value. Never treat ``set`` / ``data`` as the value.
+    """
     text = (text or "").strip()
     if not text:
         return None
     try:
         data = json.loads(text)
     except ValueError:
+        data = None
+    if isinstance(data, dict):
+        for key in ("bool", "int"):
+            if key in data:
+                parsed = _as_bool(data[key])
+                if parsed is not None:
+                    return parsed
         return None
-    if not isinstance(data, dict):
+    for line in text.splitlines():
+        stripped = line.strip()
+        lower = stripped.lower()
+        if lower.startswith("bool:") or lower.startswith("int:"):
+            return _as_bool(stripped.split(":", 1)[1])
+    return None
+
+
+def parse_getoption_int(text: str) -> int | None:
+    text = (text or "").strip()
+    if not text:
         return None
-    for key in ("int", "set", "data", "float"):
-        if key in data:
-            return data[key]
-    return data
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        for key in ("int", "float"):
+            if key in data:
+                try:
+                    return int(data[key])
+                except (TypeError, ValueError):
+                    return None
+        return None
+    for line in text.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("int:") or stripped.startswith("float:"):
+            try:
+                return int(float(stripped.split(":", 1)[1].strip()))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def getoption_texts(option: str) -> tuple[str, str]:
+    """Return ``(json_text, plain_text)`` from hyprctl getoption."""
+    _, out_j, _ = hyprctl("-j", "getoption", option)
+    _, out_t, _ = hyprctl("getoption", option)
+    return out_j or "", out_t or ""
+
+
+def read_decoration_blur() -> tuple[bool | None, str]:
+    json_text, plain_text = getoption_texts("decoration:blur:enabled")
+    raw = (plain_text or json_text).strip()
+    parsed = [v for v in (parse_getoption(plain_text), parse_getoption(json_text)) if v is not None]
+    if not parsed:
+        return None, raw
+    # Conservative: any explicit false wins (JSON ``set: true`` is ignored).
+    if any(value is False for value in parsed):
+        return False, raw
+    return True, raw
 
 
 def decoration_blur_enabled() -> bool | None:
-    code, out, _ = hyprctl("-j", "getoption", "decoration:blur:enabled")
-    if code != 0:
-        return None
-    value = _parse_option(out)
-    if value is None:
-        return None
-    return bool(int(value)) if not isinstance(value, bool) else value
+    value, _ = read_decoration_blur()
+    return value
 
 
 def decoration_blur_size() -> int | None:
-    code, out, _ = hyprctl("-j", "getoption", "decoration:blur:size")
-    if code != 0:
-        return None
-    value = _parse_option(out)
+    json_text, plain_text = getoption_texts("decoration:blur:size")
+    for text in (plain_text, json_text):
+        value = parse_getoption_int(text)
+        if value is not None:
+            return value
+    return None
+
+
+def _lock_path() -> str:
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    return os.path.join(runtime, "matt-dance-arcade-hypr.lock")
+
+
+@contextmanager
+def apply_lock() -> Iterator[None]:
+    path = _lock_path()
+    fh = open(path, "a+", encoding="utf-8")
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
 
 
 def collect_namespaces(payload: Any) -> list[str]:
@@ -251,6 +336,15 @@ def apply_layer_blur(
     namespace: str = NAMESPACE,
     restore_decoration: bool = False,
 ) -> dict[str, Any]:
+    with apply_lock():
+        return _apply_layer_blur_locked(enabled, namespace, restore_decoration)
+
+
+def _apply_layer_blur_locked(
+    enabled: bool,
+    namespace: str,
+    restore_decoration: bool,
+) -> dict[str, Any]:
     ns = namespace or NAMESPACE
     live = list_layer_namespaces()
     targets = [ns]
@@ -258,7 +352,7 @@ def apply_layer_blur(
     if extras:
         targets.extend(extras)
 
-    original = decoration_blur_enabled()
+    original, original_raw = read_decoration_blur()
     size = decoration_blur_size()
     setter = _Setter()
     flipped = False
@@ -271,7 +365,9 @@ def apply_layer_blur(
             "decoration:blur:enabled false",
         )
 
-    if enabled and original is False:
+    # Idempotent: enable whenever wanted and getoption is not actually true.
+    # A previous parse of ``set: true`` used to skip this and leave blur off.
+    if enabled and original is not True:
         if setter.apply(
             ["decoration:blur:enabled", "true"],
             decoration_enabled_lua(True),
@@ -287,13 +383,12 @@ def apply_layer_blur(
         )
 
     if setter.use_eval:
-        for target in (ns,):
-            lua = layer_rule_lua(target, enabled)
-            ok, detail = eval_lua(lua)
-            if ok:
-                setter.applied.append(lua)
-            else:
-                setter.errors.append(detail)
+        lua = layer_rule_lua(ns, enabled)
+        ok, detail = eval_lua(lua)
+        if ok:
+            setter.applied.append(lua)
+        else:
+            setter.errors.append(detail)
     else:
         templates = (_NEW_RULES_ON + _OLD_RULES_ON) if enabled else (_NEW_RULES_OFF + _OLD_RULES_OFF)
         for target in targets:
@@ -319,7 +414,7 @@ def apply_layer_blur(
     # Never trust keyword/eval exit codes. Frost is live only if getoption
     # says decoration blur is on. Do not require matched[] — layers often
     # omit the overlay if this runs before the surface maps.
-    decoration = decoration_blur_enabled()
+    decoration, getoption_raw = read_decoration_blur()
     if enabled and flipped and decoration is not True:
         flipped = False
         setter.errors.append("decoration:blur:enabled is not true after apply")
@@ -343,6 +438,7 @@ def apply_layer_blur(
         "decorationBlur": decoration,
         "decorationWas": original,
         "enabledDecorationBlur": flipped,
+        "getoptionRaw": getoption_raw or original_raw,
         "fallbackOpacity": FALLBACK_OPACITY,
         "errors": setter.errors[:8],
     }

@@ -68,6 +68,8 @@ Item {
   property int settingsIndex: 0
   property bool hyprBlurActive: false
   property bool hyprEnabledDecoration: false
+  property var hyprBlurPending: null
+  property bool hyprBlurNeedsRecheck: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -240,7 +242,8 @@ Item {
       Model.parseAppearanceText(defText),
       Model.parseAppearanceText(userText)
     )
-    root.applyLayerBlur()
+    if (root.opened)
+      root.scheduleLayerBlur()
   }
 
   function writeAppearance(key, value) {
@@ -271,7 +274,7 @@ Item {
       if (data && data.appearance)
         root.fileAppearance = Model.mergeAppearance(root.fileAppearance, data.appearance)
     } catch (e) {}
-    root.applyLayerBlur()
+    root.scheduleLayerBlur()
   }
 
   function logLayerNamespace() {
@@ -286,6 +289,11 @@ Item {
                  + " hyprActive=" + root.hyprBlurActive)
   }
 
+  function scheduleLayerBlur() {
+    root.hyprBlurNeedsRecheck = root.opened && root.appearance.blur
+    hyprBlurTimer.restart()
+  }
+
   function applyLayerBlur() {
     root.logLayerNamespace()
     var args = ["/usr/bin/python3", root.hyprBin, "apply", "--namespace", root.layerNamespace]
@@ -294,8 +302,11 @@ Item {
       if (root.hyprEnabledDecoration)
         args.push("--restore-decoration")
     }
-    if (hyprBlurProcess.running)
-      hyprBlurProcess.running = false
+    if (hyprBlurProcess.running) {
+      root.hyprBlurPending = args
+      return
+    }
+    root.hyprBlurPending = null
     hyprBlurProcess.command = args
     hyprBlurProcess.running = true
   }
@@ -321,9 +332,11 @@ Item {
                  + " hypr=[" + ((data.namespaces || []).join(",") || "-") + "]"
                  + " matched=[" + ((data.matched || []).join(",") || "-") + "]"
                  + " parser=" + (data.parser || "?")
+                 + " wanted=" + data.wanted
                  + " decorationBlur=" + data.decorationBlur
                  + " active=" + !!data.active
-                 + " fallback=" + root.blurUnavailable)
+                 + " fallback=" + root.blurUnavailable
+                 + " getoption=" + JSON.stringify(data.getoptionRaw || ""))
   }
 
   function moveSettings(dx, dy) {
@@ -408,8 +421,7 @@ Item {
       console.warn("matt-dance.arcade: open surface=keys")
       root.openKeys()
     }
-    root.applyLayerBlur()
-    hyprBlurTimer.restart()
+    root.scheduleLayerBlur()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -1370,7 +1382,7 @@ Item {
     Component.onCompleted: root.logLayerNamespace()
     onVisibleChanged: if (visible) {
       root.logLayerNamespace()
-      hyprBlurTimer.restart()
+      root.scheduleLayerBlur()
     }
 
     ArcadeBackdrop {
@@ -2724,6 +2736,16 @@ Item {
     onTriggered: root.applyLayerBlur()
   }
 
+  Timer {
+    id: hyprBlurRecheck
+    interval: 500
+    repeat: false
+    onTriggered: {
+      if (root.opened && root.appearance.blur)
+        root.applyLayerBlur()
+    }
+  }
+
   Process {
     id: hyprBlurProcess
     stdout: StdioCollector {
@@ -2736,10 +2758,21 @@ Item {
       }
     }
     onExited: function(exitCode, exitStatus) {
+      if (root.hyprBlurPending) {
+        var next = root.hyprBlurPending
+        root.hyprBlurPending = null
+        hyprBlurProcess.command = next
+        hyprBlurProcess.running = true
+        return
+      }
       if (exitCode !== 0) {
         root.hyprBlurActive = false
         console.warn("matt-dance.arcade: arcade-hypr exited " + exitCode
                      + " frost unavailable — using fallback fill")
+      }
+      if (root.hyprBlurNeedsRecheck) {
+        root.hyprBlurNeedsRecheck = false
+        hyprBlurRecheck.restart()
       }
     }
   }
@@ -2849,10 +2882,7 @@ Item {
 
   onOpenedChanged: {
     root.logLayerNamespace()
-    if (root.opened)
-      hyprBlurTimer.restart()
-    else
-      root.applyLayerBlur()
+    root.scheduleLayerBlur()
   }
   onSelectedIndexChanged: root.updateFocused()
   onMetaFileChanged: {

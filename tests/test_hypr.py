@@ -12,7 +12,13 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from unittest import mock
 
-from arcade.hypr import FALLBACK_OPACITY, NAMESPACE, apply_layer_blur, collect_namespaces
+from arcade.hypr import (
+    FALLBACK_OPACITY,
+    NAMESPACE,
+    apply_layer_blur,
+    collect_namespaces,
+    parse_getoption,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -48,20 +54,38 @@ class FakeHypr:
         size: int = 8,
         layers: dict | None = None,
         eval_ok: bool = True,
+        getoption_text: str | None = None,
+        getoption_json: str | None = None,
     ):
         self.parser = parser
         self.blur = blur
         self.size = size
         self.layers = layers if layers is not None else LAYERS
         self.eval_ok = eval_ok
+        self.getoption_text = getoption_text
+        self.getoption_json = getoption_json
         self.calls: list[tuple[str, ...]] = []
+
+    def _enabled_json(self) -> str:
+        if self.getoption_json is not None:
+            return self.getoption_json
+        return json.dumps({"int": int(self.blur), "set": True})
+
+    def _enabled_text(self) -> str:
+        if self.getoption_text is not None:
+            return self.getoption_text
+        return f"bool: {'true' if self.blur else 'false'}\nset: true"
 
     def __call__(self, *args: str):
         self.calls.append(args)
         if args[:3] == ("-j", "getoption", "decoration:blur:enabled"):
-            return 0, json.dumps({"int": int(self.blur)}), ""
+            return 0, self._enabled_json(), ""
+        if args[:2] == ("getoption", "decoration:blur:enabled"):
+            return 0, self._enabled_text(), ""
         if args[:3] == ("-j", "getoption", "decoration:blur:size"):
             return 0, json.dumps({"int": int(self.size)}), ""
+        if args[:2] == ("getoption", "decoration:blur:size"):
+            return 0, f"int: {int(self.size)}\nset: true", ""
         if args[:2] == ("-j", "layers"):
             return 0, json.dumps(self.layers), ""
         if args[0] == "keyword":
@@ -102,6 +126,23 @@ class TestCollectNamespaces(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(collect_namespaces({}), [])
         self.assertEqual(collect_namespaces(None), [])
+
+
+class TestParseGetoption(unittest.TestCase):
+    def test_plain_bool_false_set_true_is_false(self):
+        self.assertIs(parse_getoption("bool: false\nset: true"), False)
+
+    def test_plain_bool_true_set_true_is_true(self):
+        self.assertIs(parse_getoption("bool: true\nset: true"), True)
+
+    def test_json_bool_false_set_true_is_false(self):
+        self.assertIs(parse_getoption('{"bool": false, "set": true}'), False)
+
+    def test_json_int_zero_set_true_is_false(self):
+        self.assertIs(parse_getoption('{"int": 0, "set": true}'), False)
+
+    def test_json_set_true_alone_is_not_enabled(self):
+        self.assertIsNone(parse_getoption('{"set": true}'))
 
 
 class TestApplyLayerBlur(unittest.TestCase):
@@ -196,6 +237,23 @@ class TestApplyLayerBlur(unittest.TestCase):
         self.assertEqual(fake.blur, 0)
         self.assertTrue(any("enabled=false" in r for r in result["applied"]))
         self.assertTrue(any("blur=false" in r or "set_enabled" in r for r in result["applied"]))
+
+    def test_plain_bool_false_set_true_is_inactive(self):
+        fake = FakeHypr(
+            parser="eval",
+            blur=0,
+            getoption_text="bool: false\nset: true",
+            getoption_json='{"bool": false, "set": true}',
+        )
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            result = apply_layer_blur(True, namespace=NAMESPACE)
+
+        self.assertFalse(result["active"])
+        self.assertFalse(result["decorationBlur"])
+        self.assertEqual(result["getoptionRaw"], "bool: false\nset: true")
+        self.assertGreaterEqual(result["fallbackOpacity"], FALLBACK_OPACITY)
+        self.assertTrue(any("enabled=true" in r for r in result["applied"]))
 
     def test_active_does_not_require_matched_layers(self):
         fake = FakeHypr(parser="eval", blur=0, layers=EARLY_LAYERS)
@@ -309,6 +367,9 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("property bool hyprBlurActive: false", qml)
         self.assertIn("root.hyprBlurActive = false", qml)
         self.assertIn("frost unavailable", qml)
+        self.assertIn("function scheduleLayerBlur()", qml)
+        self.assertIn("hyprBlurPending", qml)
+        self.assertIn("getoptionRaw", qml)
         self.assertIn('"apply", "--namespace", root.layerNamespace', qml)
         self.assertIn("--restore-decoration", qml)
         self.assertIn("surfaceFormat.opaque: false", qml)
@@ -326,6 +387,8 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("hl.config", hypr_py)
         self.assertIn("non-legacy", hypr_py)
         self.assertIn("probe_uses_eval", hypr_py)
+        self.assertIn("parse_getoption", hypr_py)
+        self.assertIn("Never treat", hypr_py)
         menu = (ROOT / "QuickMenu.qml").read_text(encoding="utf-8")
         self.assertIn("surfaceFormat.opaque: false", menu)
         self.assertIn('WlrLayershell.namespace: "matt-dance-arcade-quickmenu"', menu)
