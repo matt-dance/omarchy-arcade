@@ -64,6 +64,8 @@ Item {
   property var tabSelection: ({})
   property point lastPointer: Qt.point(-1, -1)
   property string searchReturnScreen: "home"
+  property var fileAppearance: Model.defaultAppearance()
+  property int settingsIndex: 0
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -85,6 +87,12 @@ Item {
                                        && !root.keyStatus.steamgriddb && !root.keyStatus.igdb
                                        && !root.keyStatus.promptDismissed
 
+  readonly property string configBin: root.pluginDir + "/bin/arcade-config"
+  readonly property string userConfigFile: Model.userConfigFilePath(
+    Quickshell.env("HOME") || "",
+    Quickshell.env("XDG_CONFIG_HOME") || ""
+  )
+  readonly property string defaultConfigFile: root.pluginDir + "/default/arcade.toml"
   readonly property string stateBin: root.pluginDir + "/bin/arcade-state"
   readonly property string stateFile: Model.stateFilePath(
     Quickshell.env("HOME") || "",
@@ -106,6 +114,43 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   readonly property real uiScale: 1.25
+  readonly property var appearance: {
+    var fromFiles = root.fileAppearance || Model.defaultAppearance()
+    var fromService = root.service ? root.service.appearance : null
+    return Model.mergeAppearance(fromFiles, fromService)
+  }
+  readonly property bool systemReduceMotion: {
+    if (typeof Style !== "undefined" && typeof Style.duration === "function")
+      return Style.duration(100) < 20
+    if (typeof Style !== "undefined" && Style.reduceMotion)
+      return true
+    if (typeof Style !== "undefined" && Style.motionReduced)
+      return true
+    return false
+  }
+  readonly property string motionMode: {
+    if (root.appearance.animations === "off")
+      return "off"
+    if (root.appearance.animations === "reduced" || root.systemReduceMotion)
+      return "reduced"
+    return "full"
+  }
+  readonly property bool motionFull: root.motionMode === "full"
+  readonly property bool motionOff: root.motionMode === "off"
+  readonly property string focusedTintUrl: Model.tintUrl(root.focusedGame, root.selectedMeta)
+  readonly property var settingsRows: [
+    { id: "opacity", label: "Background opacity", kind: "slider" },
+    { id: "blur", label: "Hyprland blur", kind: "toggle" },
+    { id: "tint", label: "Dynamic game tint", kind: "toggle" },
+    { id: "anim", label: "Animations", kind: "cycle" },
+    { id: "keys", label: "Metadata keys", kind: "action", hint: "SteamGridDB · IGDB" }
+  ]
+  readonly property var settingsHints: [
+    { key: "A", label: "Toggle" },
+    { key: "Left/Right", label: "Adjust" },
+    { key: "Up/Down", label: "Rows" },
+    { key: "B", label: "Back" }
+  ]
   readonly property int cardW: Style.space(Math.round(160 * uiScale))
   readonly property int cardH: Style.space(Math.round(240 * uiScale))
   readonly property int homeCardW: Style.space(Math.round(220 * uiScale))
@@ -144,6 +189,127 @@ Item {
     { key: "X", label: "Options" },
     { key: "B", label: "Row" }
   ]
+
+  function themeFill(alpha) {
+    var c = root.background
+    return Qt.rgba(c.r, c.g, c.b, Math.max(0, Math.min(1, alpha)))
+  }
+
+  function settingsValueText(row) {
+    if (!row)
+      return ""
+    if (row.id === "opacity")
+      return Math.round(root.appearance.backgroundOpacity * 100) + "%"
+    if (row.id === "blur")
+      return root.appearance.blur ? "On" : "Off"
+    if (row.id === "tint")
+      return root.appearance.dynamicTint ? "On" : "Off"
+    if (row.id === "anim") {
+      if (root.appearance.animations === "reduced")
+        return "Reduced"
+      if (root.appearance.animations === "off")
+        return "Off"
+      return "Full"
+    }
+    if (row.id === "keys") {
+      var sgdb = root.keyStatus.steamgriddb ? "set" : "not set"
+      var igdb = root.keyStatus.igdb ? "set" : "not set"
+      return "SteamGridDB " + sgdb + " · IGDB " + igdb
+    }
+    return ""
+  }
+
+  function loadAppearanceFromDisk() {
+    var defText = ""
+    var userText = ""
+    try { defText = defaultConfigView.text() } catch (e) { defText = "" }
+    try { userText = userConfigView.text() } catch (e2) { userText = "" }
+    root.fileAppearance = Model.mergeAppearance(
+      Model.parseAppearanceText(defText),
+      Model.parseAppearanceText(userText)
+    )
+    root.applyLayerBlur()
+  }
+
+  function writeAppearance(key, value) {
+    var next = {}
+    if (key === "background_opacity")
+      next.backgroundOpacity = value
+    else if (key === "blur")
+      next.blur = value
+    else if (key === "dynamic_tint")
+      next.dynamicTint = value
+    else if (key === "animations")
+      next.animations = value
+    root.fileAppearance = Model.mergeAppearance(root.appearance, next)
+    if (appearanceProcess.running)
+      appearanceProcess.running = false
+    appearanceProcess.command = [
+      "/usr/bin/python3", root.configBin, "set", key, String(value),
+      "--plugin-dir", root.pluginDir
+    ]
+    appearanceProcess.running = true
+  }
+
+  function applyAppearanceStdout(text) {
+    if (!text || !String(text).length)
+      return
+    try {
+      var data = JSON.parse(text)
+      if (data && data.appearance)
+        root.fileAppearance = Model.mergeAppearance(root.fileAppearance, data.appearance)
+    } catch (e) {}
+    root.applyLayerBlur()
+  }
+
+  function applyLayerBlur() {
+    if (!root.opened)
+      return
+    var alpha = root.appearance.blur ? "0.2" : "1"
+    Quickshell.execDetached([
+      "hyprctl", "keyword", "layerrule", "ignorealpha " + alpha + ", matt-dance-arcade"
+    ])
+  }
+
+  function moveSettings(dx, dy) {
+    var n = root.settingsRows.length
+    if (!n)
+      return
+    if (dy !== 0)
+      root.settingsIndex = (root.settingsIndex + dy + n) % n
+    if (dx === 0)
+      return
+    var row = root.settingsRows[root.settingsIndex]
+    if (!row)
+      return
+    if (row.id === "opacity")
+      root.writeAppearance("background_opacity", Model.nudgeOpacity(root.appearance.backgroundOpacity, dx * 0.05))
+    else if (row.id === "blur")
+      root.writeAppearance("blur", !root.appearance.blur)
+    else if (row.id === "tint")
+      root.writeAppearance("dynamic_tint", !root.appearance.dynamicTint)
+    else if (row.id === "anim")
+      root.writeAppearance("animations", dx > 0
+                           ? Model.cycleAnimations(root.appearance.animations)
+                           : (root.appearance.animations === "full" ? "off"
+                              : (root.appearance.animations === "off" ? "reduced" : "full")))
+  }
+
+  function activateSettings() {
+    var row = root.settingsRows[Math.max(0, Math.min(root.settingsRows.length - 1, root.settingsIndex))]
+    if (!row)
+      return
+    if (row.id === "keys")
+      root.openKeys()
+    else if (row.id === "blur")
+      root.writeAppearance("blur", !root.appearance.blur)
+    else if (row.id === "tint")
+      root.writeAppearance("dynamic_tint", !root.appearance.dynamicTint)
+    else if (row.id === "anim")
+      root.writeAppearance("animations", Model.cycleAnimations(root.appearance.animations))
+    else if (row.id === "opacity")
+      root.writeAppearance("background_opacity", Model.nudgeOpacity(root.appearance.backgroundOpacity, 0.05))
+  }
 
   function open(payloadJson) {
     var payload = {}
@@ -187,6 +353,7 @@ Item {
       console.warn("matt-dance.arcade: open surface=keys")
       root.openKeys()
     }
+    root.applyLayerBlur()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -799,6 +966,10 @@ Item {
   }
 
   function moveSelection(dx, dy) {
+    if (root.screen === "settings") {
+      root.moveSettings(dx, dy)
+      return
+    }
     if (root.homeActive) {
       root.moveHome(dx, dy)
       return
@@ -940,7 +1111,7 @@ Item {
     }
     if (name === "accept") {
       if (root.screen === "settings") {
-        root.openKeys()
+        root.activateSettings()
       } else if (root.homeActive && root.focusZone === "details" && root.detailButton === 1) {
         root.openOptions()
       } else {
@@ -963,6 +1134,7 @@ Item {
       root.openOptions()
     } else if (name === "menu") {
       root.screen = root.screen === "settings" ? "home" : "settings"
+      root.settingsIndex = 0
       root.focusZone = "shelf"
       root.refreshList()
     } else if (name === "tab_next") {
@@ -1043,7 +1215,7 @@ Item {
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       root.handleIntent("accept")
       event.accepted = true
-    } else if (event.key === Qt.Key_X || event.key === Qt.Key_I) {
+    } else if ((event.key === Qt.Key_X || event.key === Qt.Key_I) && root.screen !== "settings") {
       root.openOptions(); event.accepted = true
     } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
       root.moveSelection(0, -1); event.accepted = true
@@ -1138,21 +1310,57 @@ Item {
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
-    Rectangle {
+    ArcadeBackdrop {
       anchors.fill: parent
-      color: root.scrim
+      themeBackground: root.background
+      accent: Commons.Color.accent
+      fillOpacity: root.appearance.backgroundOpacity
+      dynamicTint: root.appearance.dynamicTint
+      motionFull: root.motionFull
+      motionOff: root.motionOff
+      active: root.opened
+      artUrl: root.focusedTintUrl
     }
 
     Rectangle {
       anchors.fill: parent
       anchors.margins: Style.gapsOut
-      color: root.background
+      color: "transparent"
       radius: root.cornerRadius
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: Style.space(96)
+        radius: root.cornerRadius
+        z: 0
+        gradient: Gradient {
+          orientation: Gradient.Vertical
+          GradientStop { position: 0.0; color: root.themeFill(Math.min(1, root.appearance.backgroundOpacity + 0.28)) }
+          GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
+        }
+      }
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: Style.space(72)
+        radius: root.cornerRadius
+        z: 0
+        gradient: Gradient {
+          orientation: Gradient.Vertical
+          GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
+          GradientStop { position: 1.0; color: root.themeFill(Math.min(1, root.appearance.backgroundOpacity + 0.38)) }
+        }
+      }
 
       ColumnLayout {
         anchors.fill: parent
         anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.md
+        z: 1
 
         // Header
         RowLayout {
@@ -1261,13 +1469,84 @@ Item {
             font.pixelSize: Style.font.heading
           }
           Text {
+            text: "Appearance"
+            color: Commons.Color.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.capitalization: Font.AllUppercase
+          }
+
+          Repeater {
+            model: root.settingsRows
+            Rectangle {
+              required property var modelData
+              required property int index
+              Layout.fillWidth: true
+              Layout.preferredHeight: Style.space(48)
+              radius: root.cornerRadius
+              color: index === root.settingsIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.22)
+              border.width: index === root.settingsIndex ? 2 : 1
+              border.color: index === root.settingsIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
+
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Style.spacing.controlPaddingX
+                anchors.rightMargin: Style.spacing.controlPaddingX
+                spacing: Style.spacing.md
+                Text {
+                  text: modelData.label
+                  color: index === root.settingsIndex ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  Layout.fillWidth: true
+                  elide: Text.ElideRight
+                }
+                Rectangle {
+                  visible: modelData.kind === "slider"
+                  Layout.preferredWidth: Style.space(120)
+                  Layout.preferredHeight: 6
+                  radius: 3
+                  color: Qt.rgba(1, 1, 1, 0.12)
+                  Rectangle {
+                    width: parent.width * Math.max(0, Math.min(1, root.appearance.backgroundOpacity))
+                    height: parent.height
+                    radius: 3
+                    color: Commons.Color.accent
+                  }
+                }
+                Text {
+                  text: root.settingsValueText(modelData)
+                  color: index === root.settingsIndex ? root.selectedText : root.foreground
+                  opacity: 0.7
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onPositionChanged: function(mouse) {
+                  if (root.pointerMoved(mapToItem(null, mouse.x, mouse.y)))
+                    root.settingsIndex = index
+                }
+                onClicked: {
+                  root.settingsIndex = index
+                  root.activateSettings()
+                }
+              }
+            }
+          }
+
+          Text {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             color: root.foreground
             opacity: 0.75
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nBindings reload live.\nMetadata keys (optional): SteamGridDB " + (root.keyStatus.steamgriddb ? "set" : "not set") + " · IGDB " + (root.keyStatus.igdb ? "set" : "not set") + ". Press A to set them up. Stored in ~/.config/matt-dance.arcade/keys.json (chmod 600), or run bin/arcade-keys setup in a terminal.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\nFavorites, hidden games, and play history: " + root.stateFile + "\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
+            text: "Config: ~/.config/omarchy/arcade/arcade.toml\nAppearance and bindings reload live.\nMetadata keys (optional): SteamGridDB " + (root.keyStatus.steamgriddb ? "set" : "not set") + " · IGDB " + (root.keyStatus.igdb ? "set" : "not set") + ". Highlight Metadata keys and press A. Stored in ~/.config/matt-dance.arcade/keys.json (chmod 600), or run bin/arcade-keys setup in a terminal.\nSteamGridDB key (legacy): ~/.config/omarchy/arcade/steamgriddb.key\nFavorites, hidden games, and play history: " + root.stateFile + "\n\nService: " + (root.service ? "loaded" : "not loaded") + "\nDaemon: " + ((root.service && root.service.daemonReady) ? "ready" : (root.service ? "starting" : "not running — restart the shell")) + "\nControllers: " + ((root.service && root.service.pads) ? root.service.pads.length : 0) + "\nCache: " + root.libraryFile + " (" + root.localGames.length + " games)\n\nIf the service failed to load (or arcaded is not running), the library still reads library.json. Controller chords need the service.\nRecover: omarchy-restart-shell\nThen: journalctl --user -n 80 --grep matt-dance.arcade"
           }
           Text {
             visible: root.service && root.service.configErrors && root.service.configErrors.length
@@ -1275,13 +1554,6 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             text: root.service ? ("Config errors:\n" + root.service.configErrors.join("\n")) : ""
-          }
-          Text {
-            text: "A / Enter  Metadata keys   ·   B / Esc  back"
-            color: root.foreground
-            opacity: 0.5
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
           }
         }
 
@@ -1342,19 +1614,47 @@ Item {
               z: index === root.selectedIndex ? 2 : 1
 
               Rectangle {
+                id: homeCardGlow
+                anchors.centerIn: homeCard
+                width: homeCard.width + Style.space(22)
+                height: homeCard.height + Style.space(22)
+                radius: root.cornerRadius + Style.space(8)
+                color: {
+                  var a = Commons.Color.accent
+                  return Qt.rgba(a.r, a.g, a.b, index === root.selectedIndex ? 0.32 : 0)
+                }
+                scale: homeCard.scale
+                z: 0
+                Behavior on color { enabled: root.motionFull; ColorAnimation { duration: 160 } }
+              }
+
+              Rectangle {
+                id: homeCardShadow
+                anchors.centerIn: homeCard
+                anchors.verticalCenterOffset: Style.space(10)
+                width: homeCard.width
+                height: homeCard.height
+                radius: root.cornerRadius
+                color: Qt.rgba(0, 0, 0, index === root.selectedIndex ? 0.5 : 0.32)
+                scale: homeCard.scale
+                z: 1
+              }
+
+              Rectangle {
                 id: homeCard
                 width: root.homeCardW
                 height: root.homeCardH
                 anchors.centerIn: parent
                 radius: root.cornerRadius
                 clip: true
+                z: 2
                 color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
                 border.width: index === root.selectedIndex ? Math.max(3, Style.space(3)) : 1
                 border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
-                scale: index === root.selectedIndex ? 1.12 : 1.0
+                scale: index === root.selectedIndex ? (root.motionOff ? 1.0 : 1.12) : 1.0
                 opacity: index === root.selectedIndex ? 1 : 0.82
-                Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                Behavior on opacity { NumberAnimation { duration: 140 } }
+                Behavior on scale { enabled: root.motionFull; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                Behavior on opacity { enabled: !root.motionOff; NumberAnimation { duration: 140 } }
 
                 Image {
                   id: homeCover
@@ -1471,7 +1771,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: root.cornerRadius
-            color: root.background
+            color: root.themeFill(Math.min(0.55, root.appearance.backgroundOpacity + 0.12))
             clip: true
             // Hyprland active window border from the current Omarchy theme
             // (accent color / gradient + window thickness). Fall back to a
@@ -1497,6 +1797,37 @@ Item {
               asynchronous: true
               visible: status === Image.Ready
               opacity: 0.55
+              transformOrigin: Item.Center
+              scale: heroKen.scale
+              transform: Translate { x: heroKen.xShift }
+
+              SequentialAnimation {
+                id: heroKen
+                property real scale: 1.0
+                property real xShift: 0
+                running: root.opened && root.homeActive && root.motionFull && heroArt.visible
+                loops: Animation.Infinite
+                ParallelAnimation {
+                  NumberAnimation { target: heroKen; property: "scale"; from: 1.0; to: 1.07; duration: 22000; easing.type: Easing.InOutSine }
+                  NumberAnimation { target: heroKen; property: "xShift"; from: 0; to: -18; duration: 22000; easing.type: Easing.InOutSine }
+                }
+                ParallelAnimation {
+                  NumberAnimation { target: heroKen; property: "scale"; from: 1.07; to: 1.0; duration: 22000; easing.type: Easing.InOutSine }
+                  NumberAnimation { target: heroKen; property: "xShift"; from: -18; to: 0; duration: 22000; easing.type: Easing.InOutSine }
+                }
+              }
+
+              Connections {
+                target: root
+                function onFocusedGameChanged() {
+                  if (!root.motionFull) {
+                    heroKen.scale = 1.0
+                    heroKen.xShift = 0
+                    return
+                  }
+                  heroKen.restart()
+                }
+              }
             }
 
             Image {
@@ -1513,9 +1844,21 @@ Item {
             Rectangle {
               anchors.fill: parent
               gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.15) }
-                GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.25) }
-                GradientStop { position: 1.0; color: root.background }
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.18) }
+                GradientStop { position: 0.42; color: Qt.rgba(0, 0, 0, 0.28) }
+                GradientStop { position: 1.0; color: root.themeFill(Math.min(0.82, root.appearance.backgroundOpacity + 0.42)) }
+              }
+            }
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              width: parent.width * 0.62
+              gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: root.themeFill(Math.min(0.55, root.appearance.backgroundOpacity + 0.22)) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
               }
             }
 
@@ -1790,12 +2133,35 @@ Item {
             required property int index
 
             Rectangle {
+              anchors.centerIn: card
+              anchors.verticalCenterOffset: Style.space(8)
+              width: card.width
+              height: card.height
+              radius: root.cornerRadius
+              color: Qt.rgba(0, 0, 0, 0.4)
+              z: 0
+            }
+
+            Rectangle {
+              anchors.centerIn: card
+              width: card.width + Style.space(14)
+              height: card.height + Style.space(14)
+              radius: root.cornerRadius + Style.space(4)
+              color: {
+                var a = Commons.Color.accent
+                return Qt.rgba(a.r, a.g, a.b, index === root.selectedIndex ? 0.26 : 0)
+              }
+              z: 0
+            }
+
+            Rectangle {
               id: card
               width: root.cardW
               height: root.cardH
               anchors.centerIn: parent
               radius: root.cornerRadius
               clip: true
+              z: 1
               color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
               border.width: index === root.selectedIndex ? Math.max(2, Style.space(2)) : 1
               border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
@@ -1925,14 +2291,15 @@ Item {
         RowLayout {
           Layout.fillWidth: true
           spacing: Style.spacing.lg
-          visible: root.screen !== "settings"
 
           Repeater {
             model: osk.opened
                    ? root.oskHints
-                   : (root.homeActive
-                      ? (root.focusZone === "details" ? root.homeDetailsHints : root.homeShelfHints)
-                      : root.defaultHints)
+                   : (root.screen === "settings"
+                      ? root.settingsHints
+                      : (root.homeActive
+                         ? (root.focusZone === "details" ? root.homeDetailsHints : root.homeShelfHints)
+                         : root.defaultHints))
             RowLayout {
               required property var modelData
               spacing: Style.spacing.xs
@@ -1989,7 +2356,7 @@ Item {
           width: Math.min(parent.width - Style.space(80), Style.space(420))
           height: playOnColumn.implicitHeight + Style.spacing.panelPadding * 2
           radius: root.cornerRadius
-          color: root.background
+          color: root.themeFill(Math.min(0.92, root.appearance.backgroundOpacity + 0.45))
           border.color: Commons.Color.menu.border
           border.width: 1
 
@@ -2066,7 +2433,7 @@ Item {
           width: Math.min(parent.width - Style.space(80), Style.space(640))
           height: keysColumn.implicitHeight + Style.spacing.panelPadding * 2
           radius: root.cornerRadius
-          color: root.background
+          color: root.themeFill(Math.min(0.92, root.appearance.backgroundOpacity + 0.45))
           border.color: Commons.Color.menu.border
           border.width: 1
           MouseArea { anchors.fill: parent }
@@ -2257,8 +2624,38 @@ Item {
     manifest: root.manifest
     pluginRegistry: root.pluginRegistry
     service: root.service
+    panelFill: root.themeFill(Math.min(0.88, root.appearance.backgroundOpacity + 0.38))
     onDismissed: root.onQuickMenuDismissed()
     onKeysRequested: Qt.callLater(root.showKeysFromMenu)
+  }
+
+  FileView {
+    id: defaultConfigView
+    path: root.defaultConfigFile
+    watchChanges: true
+    onFileChanged: root.loadAppearanceFromDisk()
+    onLoaded: root.loadAppearanceFromDisk()
+  }
+
+  FileView {
+    id: userConfigView
+    path: root.userConfigFile
+    watchChanges: true
+    onFileChanged: root.loadAppearanceFromDisk()
+    onLoaded: root.loadAppearanceFromDisk()
+  }
+
+  Process {
+    id: appearanceProcess
+    stdout: StdioCollector {
+      onStreamFinished: root.applyAppearanceStdout(text)
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0)
+        console.warn("matt-dance.arcade: arcade-config exited " + exitCode)
+      if (userConfigView && typeof userConfigView.reload === "function")
+        userConfigView.reload()
+    }
   }
 
   FileView {
@@ -2351,6 +2748,7 @@ Item {
     }
   }
 
+  onOpenedChanged: if (root.opened) root.applyLayerBlur()
   onSelectedIndexChanged: root.updateFocused()
   onMetaFileChanged: {
     if (metaView && typeof metaView.reload === "function")
@@ -2361,5 +2759,6 @@ Item {
   Component.onCompleted: {
     console.warn("matt-dance.arcade: overlay loaded; cache=" + root.libraryFile)
     root.loadLibraryFromDisk()
+    root.loadAppearanceFromDisk()
   }
 }

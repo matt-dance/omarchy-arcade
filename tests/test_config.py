@@ -72,6 +72,50 @@ class TestLoadConfig(unittest.TestCase):
             # Defaults still load
             self.assertTrue(cfg.bindings)
 
+    def test_appearance_defaults(self):
+        root = Path(__file__).resolve().parent.parent
+        cfg = load_config(plugin_dir=root, user_path=Path("/nonexistent"))
+        self.assertEqual(cfg.appearance["background_opacity"], 0.4)
+        self.assertTrue(cfg.appearance["blur"])
+        self.assertTrue(cfg.appearance["dynamic_tint"])
+        self.assertEqual(cfg.appearance["animations"], "full")
+
+    def test_appearance_user_override_and_clamp(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            user = Path(tmp) / "arcade.toml"
+            user.write_text(
+                """
+                [appearance]
+                background_opacity = 1.8
+                blur = false
+                dynamic_tint = 0
+                animations = "reduced"
+                """,
+                encoding="utf-8",
+            )
+            cfg = load_config(plugin_dir=root, user_path=user)
+            self.assertEqual(cfg.appearance["background_opacity"], 1.0)
+            self.assertFalse(cfg.appearance["blur"])
+            self.assertFalse(cfg.appearance["dynamic_tint"])
+            self.assertEqual(cfg.appearance["animations"], "reduced")
+
+    def test_appearance_invalid_falls_back(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            user = Path(tmp) / "arcade.toml"
+            user.write_text(
+                """
+                [appearance]
+                background_opacity = "nope"
+                animations = "dramatic"
+                """,
+                encoding="utf-8",
+            )
+            cfg = load_config(plugin_dir=root, user_path=user)
+            self.assertEqual(cfg.appearance["background_opacity"], 0.4)
+            self.assertEqual(cfg.appearance["animations"], "full")
+
 
 if __name__ == "__main__":
     unittest.main()

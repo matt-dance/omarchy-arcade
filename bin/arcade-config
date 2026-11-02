@@ -1,0 +1,56 @@
+#!/usr/bin/python3
+"""Read or update Arcade [appearance] settings in the user arcade.toml."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.appearance import KEYS, current_appearance, parse_set_value, set_appearance
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Read or set Arcade appearance settings")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def add_shared(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--plugin-dir", type=Path, default=ROOT, help="plugin checkout (defaults)")
+        p.add_argument("--path", type=Path, help="user arcade.toml (default: XDG config)")
+
+    p_show = sub.add_parser("show", help="Print the merged [appearance] table as JSON")
+    add_shared(p_show)
+
+    p_set = sub.add_parser("set", help="Write one [appearance] key to the user arcade.toml")
+    add_shared(p_set)
+    p_set.add_argument("key", choices=KEYS)
+    p_set.add_argument("value")
+
+    args = parser.parse_args(argv)
+    plugin_dir = args.plugin_dir
+    path = args.path
+
+    try:
+        if args.cmd == "show":
+            data = current_appearance(plugin_dir=plugin_dir, user_path=path)
+        else:
+            data = set_appearance(
+                {args.key: parse_set_value(args.key, args.value)},
+                user_path=path,
+                plugin_dir=plugin_dir,
+            )
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+        return 2
+
+    print(json.dumps({"appearance": data}, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -61,6 +61,17 @@ class TestOverlayInput(unittest.TestCase):
         service = (ROOT / "Service.qml").read_text(encoding="utf-8")
         self.assertIn("omarchy/arcade/arcade.toml", service)
         self.assertIn('t: "reload"', service)
+        self.assertIn("reloading bindings and appearance", service)
+
+    def test_settings_navigates_appearance_rows(self):
+        self.assertIn("function moveSettings(dx, dy)", self.qml)
+        self.assertIn("function activateSettings()", self.qml)
+        move = self.qml[self.qml.index("function moveSelection(dx, dy)"):]
+        move = move[: move.index("\n  }\n")]
+        self.assertIn('root.screen === "settings"', move)
+        self.assertIn("root.moveSettings(dx, dy)", move)
+        accept = self.qml[self.qml.index('if (name === "accept")'):]
+        self.assertIn("root.activateSettings()", accept)
 
 
 if __name__ == "__main__":

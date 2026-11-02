@@ -715,3 +715,175 @@ function lastPlayedOf(game, meta) {
 function factsLine(game, meta) {
   return playMeta(game, meta)
 }
+
+function defaultAppearance() {
+  return {
+    backgroundOpacity: 0.4,
+    blur: true,
+    dynamicTint: true,
+    animations: "full"
+  }
+}
+
+function userConfigFilePath(home, xdgConfigHome) {
+  var xdg = xdgConfigHome || ""
+  var h = home || ""
+  var base = (xdg && xdg.length) ? xdg : (h + "/.config")
+  return base + "/omarchy/arcade/arcade.toml"
+}
+
+function _stripTomlComment(value) {
+  var inQuote = false
+  var quote = ""
+  var out = ""
+  for (var i = 0; i < value.length; i++) {
+    var ch = value.charAt(i)
+    if (inQuote) {
+      out += ch
+      if (ch === quote)
+        inQuote = false
+      continue
+    }
+    if (ch === "#" )
+      break
+    if (ch === "\"" || ch === "'") {
+      inQuote = true
+      quote = ch
+    }
+    out += ch
+  }
+  return out.replace(/^\s+/, "").replace(/\s+$/, "")
+}
+
+function _parseTomlScalar(raw) {
+  var value = _stripTomlComment(String(raw || ""))
+  if (!value.length)
+    return undefined
+  if ((value.charAt(0) === "\"" && value.charAt(value.length - 1) === "\"")
+      || (value.charAt(0) === "'" && value.charAt(value.length - 1) === "'"))
+    return value.slice(1, -1)
+  var lower = value.toLowerCase()
+  if (lower === "true") return true
+  if (lower === "false") return false
+  if (lower === "full" || lower === "reduced" || lower === "off")
+    return lower
+  var n = Number(value)
+  if (value.length && isFinite(n))
+    return n
+  return value
+}
+
+function parseAppearanceText(text) {
+  var out = defaultAppearance()
+  if (!text || !String(text).length)
+    return out
+  var lines = String(text).split("\n")
+  var inSection = false
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].replace(/\r$/, "")
+    var trimmed = line.replace(/^\s+/, "").replace(/\s+$/, "")
+    if (!trimmed.length || trimmed.charAt(0) === "#")
+      continue
+    if (trimmed.charAt(0) === "[") {
+      var name = trimmed.replace(/^\[/, "").replace(/\]\s*$/, "")
+      inSection = name === "appearance"
+      continue
+    }
+    if (!inSection)
+      continue
+    var eq = trimmed.indexOf("=")
+    if (eq < 0)
+      continue
+    var key = trimmed.slice(0, eq).replace(/\s+$/, "")
+    var parsed = _parseTomlScalar(trimmed.slice(eq + 1))
+    if (parsed === undefined)
+      continue
+    if (key === "background_opacity" || key === "backgroundOpacity") {
+      var opacity = Number(parsed)
+      if (isFinite(opacity))
+        out.backgroundOpacity = Math.max(0, Math.min(1, opacity))
+    } else if (key === "blur") {
+      out.blur = !!parsed && parsed !== "false" && parsed !== 0
+    } else if (key === "dynamic_tint" || key === "dynamicTint") {
+      out.dynamicTint = !!parsed && parsed !== "false" && parsed !== 0
+    } else if (key === "animations") {
+      var mode = String(parsed).toLowerCase()
+      if (mode === "full" || mode === "reduced" || mode === "off")
+        out.animations = mode
+    }
+  }
+  return out
+}
+
+function appearanceFromAny(src) {
+  if (!src || typeof src !== "object")
+    return defaultAppearance()
+  var out = defaultAppearance()
+  var opacity = src.backgroundOpacity
+  if (opacity === undefined)
+    opacity = src.background_opacity
+  var n = Number(opacity)
+  if (isFinite(n))
+    out.backgroundOpacity = Math.max(0, Math.min(1, n))
+  if (src.blur !== undefined)
+    out.blur = !!src.blur && src.blur !== "false" && src.blur !== 0
+  var tint = src.dynamicTint
+  if (tint === undefined)
+    tint = src.dynamic_tint
+  if (tint !== undefined)
+    out.dynamicTint = !!tint && tint !== "false" && tint !== 0
+  var anim = src.animations
+  if (anim !== undefined) {
+    var mode = String(anim).toLowerCase()
+    if (mode === "full" || mode === "reduced" || mode === "off")
+      out.animations = mode
+  }
+  return out
+}
+
+function mergeAppearance(base, overlay) {
+  var out = appearanceFromAny(base)
+  if (!overlay || typeof overlay !== "object")
+    return out
+  var extra = appearanceFromAny(overlay)
+  if (overlay.backgroundOpacity !== undefined || overlay.background_opacity !== undefined)
+    out.backgroundOpacity = extra.backgroundOpacity
+  if (overlay.blur !== undefined)
+    out.blur = extra.blur
+  if (overlay.dynamicTint !== undefined || overlay.dynamic_tint !== undefined)
+    out.dynamicTint = extra.dynamicTint
+  if (overlay.animations !== undefined)
+    out.animations = extra.animations
+  return out
+}
+
+function cycleAnimations(current) {
+  if (current === "full")
+    return "reduced"
+  if (current === "reduced")
+    return "off"
+  return "full"
+}
+
+function nudgeOpacity(value, delta) {
+  var n = Number(value)
+  if (!isFinite(n))
+    n = 0.4
+  n = Math.round((n + Number(delta)) * 20) / 20
+  if (n < 0)
+    n = 0
+  if (n > 1)
+    n = 1
+  return n
+}
+
+function tintUrl(game, meta) {
+  var hero = heroUrl(game, meta)
+  if (hero)
+    return hero
+  if (hasMetaCover(meta))
+    return coverUrl(game, meta)
+  if (game && game.art && game.art.cover && !isIconOnly(game))
+    return game.art.cover
+  return ""
+}

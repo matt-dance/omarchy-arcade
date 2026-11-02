@@ -33,9 +33,11 @@ bash ~/.config/omarchy/plugins/matt-dance.arcade/scripts/install.sh
 
 `install.sh` is idempotent, supports `--dry-run`, backs up changed files, and:
 
-1. Writes `~/.config/hypr/arcade.lua` (`Super + Ctrl + G`)
+1. Writes `~/.config/hypr/arcade.lua` (`Super + Ctrl + G`, plus Hyprland `layer_rule` blur / `ignore_alpha` for the `matt-dance-arcade` overlay namespace)
 2. Appends a managed require block to `~/.config/hypr/hyprland.lua`
 3. Merges Gaming › Arcade rows into `~/.config/omarchy/extensions/omarchy-menu.jsonc` (reuses an existing `gaming` root from the GFN plugin when present)
+
+`uninstall.sh` removes the managed blocks and `arcade.lua`, which drops the blur rules.
 
 Plugins run **unsandboxed** inside `omarchy-shell`. Read the code before enabling.
 
@@ -58,7 +60,7 @@ omarchy plugin remove matt-dance.arcade
 ## Usage
 
 - **Open:** `Super + Ctrl + G`, Gaming › Arcade, or `Guide + Start` on a controller
-- **Home:** horizontal row of larger covers (recently played first, then the rest of the library). The focused card scales up. The details pane below shows hero/banner art, title, source badges including merged **Play on…** stores, last played or playtime, and **Play** / **Options**
+- **Home:** horizontal row of larger covers (recently played first, then the rest of the library). The overlay fill is the current Omarchy theme background at ~40% opacity so the wallpaper shows through (optional Hyprland blur). The focused game washes a soft tint into that backdrop, and its card scales with an accent glow. The details pane below shows hero/banner art (gentle ken-burns), title, source badges including merged **Play on…** stores, last played or playtime, and **Play** / **Options**
 - **Browse Home:** D-pad left/right along the row, down into Play/Options, up back to the row. `A` plays, `X` opens Options (Play on… picker)
 - **Library:** `LB` / `RB` (Tab / Shift+Tab) step through Home → All games → Favorites → one tab per store → Hidden. `Select` (F2) cycles the sort: Recently played, A–Z, Most played, Store. The choice is remembered
 - **Favorites:** `R3` (F3) stars the focused game. Home shows recently played first, then favorites, then the rest
@@ -66,7 +68,7 @@ omarchy plugin remove matt-dance.arcade
 - **Play history:** Arcade records its own last-played time and playtime for every game it launches, so GeForce NOW, Battle.net/Wine and `.desktop` games also sort by recent play. Stored in `${XDG_STATE_HOME:-~/.local/state}/matt-dance.arcade/state.json`
 - **Search:** `Y` opens an on-screen keyboard (D-pad/stick to move, `A` types, `X` deletes, `Y` adds a space, `Start` keeps the results, `B` cancels). On a keyboard, `/` or just start typing; Enter launches the top result and Esc clears
 - **Held input:** holding the D-pad or tilting the left stick repeats focus moves (deadzone: `stick_deadzone` in `arcade.toml`). `LT` / `RT` page through the grid
-- **Settings:** `Start` / `M`
+- **Settings:** `Start` / `M` — appearance (opacity, blur, dynamic tint, animations) plus metadata keys. Changes write `~/.config/omarchy/arcade/arcade.toml` and reload live.
 - **Close Arcade:** `B` / Esc from the Home row
 - **While a game runs:** tap `Guide` for the Steam Deck-style system menu (game, audio, display, Bluetooth, Wi-Fi, performance, capture, notifications, power). The same menu opens from the desktop or while Arcade is already up via `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'`. Power actions ask for **A** to confirm and **B** to cancel. Rows whose tools are missing stay hidden.
 - **Play on…:** the same title from two real stores (Steam + GeForce NOW, Heroic + Steam, …) shows merged badges. Steam’s own `steam://rungameid/<appid>` / `steam_app_*` `.desktop` shortcuts collapse into the Steam entry instead of a fake **Play on Desktop** badge.
@@ -161,7 +163,7 @@ Refresh is rare (14 days). The UI never waits on the network: it shows cache imm
 
 The git repo is public. **Never commit keys.** Arcade works without them; they only add box art (SteamGridDB) and descriptions for non-Steam games (IGDB).
 
-**In Arcade (controller-friendly):** `Start` → Settings → `A` opens **Metadata keys**. The same sheet opens from the first-run card on Home and from the system menu (Guide tap → Arcade › Metadata keys). Copy a key in your browser, then press `A` on its row to paste it from the clipboard (`wl-paste`). `X` types it instead (masked), `Y` clears that key, and **Test keys** checks each one against its API (`ok`, `invalid`, `unreachable`). Saving writes `keys.json` with mode `0600`, clears the cached IGDB token, and refreshes metadata that was fetched before the key existed (no 14-day wait). The overlay only ever sees *set / not set*.
+**In Arcade (controller-friendly):** `Start` → Settings. The first rows are appearance (opacity, Hyprland blur, dynamic tint, animations). Highlight **Metadata keys** and press `A` to open the keys sheet. The same sheet opens from the first-run card on Home and from the system menu (Guide tap → Arcade › Metadata keys). Copy a key in your browser, then press `A` on its row to paste it from the clipboard (`wl-paste`). `X` types it instead (masked), `Y` clears that key, and **Test keys** checks each one against its API (`ok`, `invalid`, `unreachable`). Saving writes `keys.json` with mode `0600`, clears the cached IGDB token, and refreshes metadata that was fetched before the key existed (no 14-day wait). The overlay only ever sees *set / not set*.
 
 **In a terminal:**
 
@@ -227,6 +229,24 @@ roms = true
 
 ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 
+## Appearance
+
+The overlay is a transparent theme-colored wash, not a solid black sheet. Colors still come from the live Omarchy theme (`Commons.Color.menu.*` / accent), so switching themes recolors Arcade immediately.
+
+In `~/.config/omarchy/arcade/arcade.toml`:
+
+```toml
+[appearance]
+background_opacity = 0.4   # 0–1 theme-background fill (default 0.4)
+blur = true                # Hyprland frost behind the layer (needs install.sh)
+dynamic_tint = true        # wash the focused game's hero/cover into the backdrop
+animations = "full"        # full | reduced | off
+```
+
+Edits reload live, same as bindings. Settings (`Start`) exposes opacity, blur, tint, and animations. `reduced` / `off` skip ken-burns, grain pulse, and card-scale motion; the shell's reduce-motion hint is treated as `reduced`.
+
+`bin/arcade-config show` prints the merged table. `bin/arcade-config set background_opacity 0.35` writes the user override. The Hyprland rules live in `~/.config/hypr/arcade.lua` (`hl.layer_rule` for namespace `matt-dance-arcade`, `blur` + `ignore_alpha 0.2`). Turning blur off in Settings raises `ignorealpha` so the frost goes away until the next Hyprland reload reapplies the file (then Arcade reapplies the preference when it opens).
+
 ## Layout
 
 ```text
@@ -243,6 +263,9 @@ ROMs are read from `~/Games/roms/<system>/` (Omarchy RetroArch layout).
 ├── bin/arcade-sys         # System menu probes/actions (wpctl, nmcli, …)
 ├── bin/arcade-keys        # Optional metadata key setup (status/set/test/remove/setup)
 ├── bin/arcade-state       # Favorites / hidden / sort edits (state.json)
+├── bin/arcade-config      # Read/write [appearance] in the user arcade.toml
+├── ArcadeBackdrop.qml     # Transparent fill, game tint, vignette, grain
+├── assets/grain.png       # Tiled film grain (static, not a live shader)
 ├── arcade/                # Python package
 ├── keys.example.json      # Empty optional API key template
 ├── default/arcade.toml
@@ -267,6 +290,7 @@ python3 -m unittest discover -s tests -v
 python3 bin/arcade-scan --json
 python3 bin/arcade-meta --plugin-dir . --offline --limit 1
 python3 bin/arcade-sys items
+python3 bin/arcade-config show
 printf '{"t":"ping"}\n' | python3 bin/arcaded --plugin-dir .   # Ctrl+D to exit
 ```
 
@@ -274,7 +298,7 @@ On Omarchy:
 
 ```bash
 omarchy plugin validate ~/.config/omarchy/plugins/matt-dance.arcade
-qmllint -I "$OMARCHY_PATH/shell" Arcade.qml QuickMenu.qml Service.qml
+qmllint -I "$OMARCHY_PATH/shell" Arcade.qml ArcadeBackdrop.qml QuickMenu.qml Service.qml
 ```
 
 ## Hardware testing
@@ -282,10 +306,10 @@ qmllint -I "$OMARCHY_PATH/shell" Arcade.qml QuickMenu.qml Service.qml
 These cannot be fully verified in CI. On a real Omarchy host with a controller:
 
 1. **Plugin load** — `omarchy plugin validate` and enable; bar stays healthy; journal shows `service loaded` and `starting arcaded`
-2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live
+2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live. The desktop wallpaper shows through the overlay (not an opaque black sheet). With `blur = true` and `install.sh` applied, Hyprland frosts that wallpaper (`hyprctl layers` shows `matt-dance-arcade`)
 3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
-5. **Controller nav** — D-pad and left stick move focus; holding either repeats after a short delay and stops on release; A launches; B backs; Home left/right along the shelf; `Y` opens the on-screen keyboard and typing filters live; editing `~/.config/omarchy/arcade/arcade.toml` logs `arcade.toml changed — reloading bindings`
+5. **Controller nav** — D-pad and left stick move focus; holding either repeats after a short delay and stops on release; A launches; B backs; Home left/right along the shelf; `Y` opens the on-screen keyboard and typing filters live; editing `~/.config/omarchy/arcade/arcade.toml` logs `arcade.toml changed — reloading bindings and appearance`. Start → Settings: left/right changes opacity in 5% steps, A toggles blur/tint or cycles animations, and the Home backdrop updates without restarting the shell.
 6. **Guide chords** — `Guide+Start` toggles; volume/screenshot chords work; hold-B closes a game
 7. **Guide tap / showQuickMenu** — from the desktop over a running game *and* with Arcade already open, the sectioned system menu stays up (journal shows `showQuickMenu` / `surface=quickmenu` / `persistQuickMenu`). B closes or cancels a power confirm; A confirms lock/suspend/restart/shutdown/log out. `omarchy-shell shell call matt-dance.arcade showQuickMenu '{}'` must leave the menu visible, not close Arcade to a blank desktop.
 8. **System menu tools** — after Guide tap / `showQuickMenu`, journal must list `tool volume=wpctl` (etc.) and `sysmenu items=… sections=Game,Audio,…` with no empty `JSON.parse` warning. Audio/Bluetooth/Wi-Fi appear when `/usr/bin/wpctl` and friends exist even if Quickshell's PATH is empty. Power (lock/suspend/restart/shutdown/log out) is always shown. Missing optional tools stay hidden; battery is shown when sysfs exposes it.
@@ -294,11 +318,11 @@ These cannot be fully verified in CI. On a real Omarchy host with a controller:
 11. **Idle inhibit** — browsing with only a controller for >3 minutes does not start the screensaver
 12. **GFN** — titles added via GeForce NOW Menu appear under GeForce NOW and launch through `gfn-play.sh`. A Steam title that also has a `steam://rungameid` `.desktop` shows Steam + **Play on GeForce NOW** only — not **Play on Desktop**.
 13. **Covers vs icons** — Enshrouded / GFN box art is cropped to the card with a focus ring (no overflow). World of Warcraft (`wow.desktop` with `StartupWMClass=steam_app_battlenet` and a custom Exec) stays in the library; a small `wow.png` is centered at native size. Battle.net without art uses initials. Details pane shows hero or a dimmed cover. With a SteamGridDB key, missing art can still fetch by title.
-14. **Metadata keys** — with no keys, Home shows the one-time keys card; Start → A opens the sheet and the card is gone next time. Copy a SteamGridDB key, press A on its row: status flips to *set*, `stat -c %a ~/.config/matt-dance.arcade/keys.json` prints `600`, Test keys says `SteamGridDB: ok`, and a game that had no box art gets it within a minute. A garbage clipboard (a sentence) shows an error and saves nothing. Guide tap → Arcade › Metadata keys opens the same sheet. `journalctl --user --grep matt-dance.arcade` never shows a key value
-15. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
-14. **Favorites, hide, sort** — `R3` stars a game (star on the card, it moves into the favorites block on Home and focus stays on it); `X` → Hide removes it from Home/Library/Search and it appears under the Hidden tab; `Select` changes the Library order and survives closing Arcade; `~/.local/state/matt-dance.arcade/state.json` reflects each change
-15. **Play history** — play a GeForce NOW or Battle.net game for a few minutes and quit; on reopen it is first on Home and the details pane shows the playtime
-16. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks
+14. **Metadata keys** — with no keys, Home shows the one-time keys card; Start → highlight Metadata keys → A opens the sheet and the card is gone next time. Copy a SteamGridDB key, press A on its row: status flips to *set*, `stat -c %a ~/.config/matt-dance.arcade/keys.json` prints `600`, Test keys says `SteamGridDB: ok`, and a game that had no box art gets it within a minute. A garbage clipboard (a sentence) shows an error and saves nothing. Guide tap → Arcade › Metadata keys opens the same sheet. `journalctl --user --grep matt-dance.arcade` never shows a key value
+15. **Favorites, hide, sort** — `R3` stars a game (star on the card, it moves into the favorites block on Home and focus stays on it); `X` → Hide removes it from Home/Library/Search and it appears under the Hidden tab; `Select` changes the Library order and survives closing Arcade; `~/.local/state/matt-dance.arcade/state.json` reflects each change
+16. **Play history** — play a GeForce NOW or Battle.net game for a few minutes and quit; on reopen it is first on Home and the details pane shows the playtime
+17. **Appearance** — Home is readable over a busy wallpaper at the default 0.4 opacity (header/details/footer scrims, card shadows). Focusing a game with hero art tints the backdrop; a game with no art leaves the theme wash only. `animations = "off"` (or the shell reduce-motion hint) stops ken-burns, grain pulse, and card scale. A 200-game library still scrolls at 60 fps — tint is two 48×27 images, not a per-card shader.
+18. **Install/uninstall** — `install.sh` / `uninstall.sh` leave no leftover managed blocks, including the overlay blur `layer_rule`
 
 ## Design docs
 

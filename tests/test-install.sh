@@ -69,6 +69,12 @@ if grep -qx 'unknown' "$out1" || grep -qx 'unknown' "$TMP/install1.err"; then
 fi
 
 [[ -f "$HOME/.config/hypr/arcade.lua" ]] || { echo "missing arcade.lua" >&2; exit 1; }
+grep -Fq -- 'hl.layer_rule' "$HOME/.config/hypr/arcade.lua" \
+  || { echo "missing Hyprland layer_rule for overlay blur" >&2; exit 1; }
+grep -Fq -- 'matt-dance-arcade' "$HOME/.config/hypr/arcade.lua" \
+  || { echo "missing overlay namespace in arcade.lua" >&2; exit 1; }
+grep -Fq -- 'ignore_alpha' "$HOME/.config/hypr/arcade.lua" \
+  || { echo "missing ignore_alpha layerrule" >&2; exit 1; }
 grep -Fq -- '-- BEGIN matt-dance.arcade' "$HOME/.config/hypr/hyprland.lua" \
   || { echo "missing hypr managed block" >&2; exit 1; }
 grep -Fq -- '// BEGIN matt-dance.arcade' "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" \
@@ -88,6 +94,8 @@ bash "$ROOT/scripts/install.sh" >"$TMP/install2.out" 2>"$TMP/install2.err"
   || { echo "duplicate menu BEGIN block after reinstall" >&2; exit 1; }
 [[ "$(count_matches "$HOME/.config/hypr/arcade.lua" 'SUPER + CTRL + G')" -eq 1 ]] \
   || { echo "arcade.lua bind missing or duplicated" >&2; exit 1; }
+[[ "$(count_matches "$HOME/.config/hypr/arcade.lua" 'namespace = "matt-dance-arcade"')" -eq 1 ]] \
+  || { echo "overlay namespace rule missing or duplicated after reinstall" >&2; exit 1; }
 if grep -q 'unrecognized option' "$TMP/install2.err" "$TMP/install2.out"; then
   echo "reinstall grep option error" >&2
   cat "$TMP/install2.err" "$TMP/install2.out" >&2

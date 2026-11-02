@@ -180,3 +180,22 @@ Cross/Circle/Square/Triangle for PlayStation pads and swap the A/B labels for
 Nintendo pads.
 
 **Status: Planned.**
+
+## 11. Transparent overlay, game tint, and appearance settings (polish, medium)
+
+**Problem.** Home is an opaque dark sheet. The wallpaper never shows through, there
+is no Hyprland blur, and the backdrop does not react to the focused game. Settings
+is a wall of text with no look-and-feel controls.
+
+**Change.** The overlay fill is the live Omarchy theme background at
+`[appearance] background_opacity` (default 0.4). `install.sh` writes
+`hl.layer_rule` blur / `ignore_alpha` for namespace `matt-dance-arcade` (removed
+by `uninstall.sh`). A downscaled hero/cover pair crossfades into the backdrop
+when `dynamic_tint` is on, and degrades to the theme wash when there is no art.
+Focused cards keep a slight scale plus an accent glow; the details hero has a
+slow ken-burns; a tiled grain and vignette stay cheap. `animations =
+full|reduced|off` and the shell reduce-motion hint gate motion. Settings exposes
+opacity, blur, tint, and animations; `bin/arcade-config` writes the user
+`arcade.toml`. Theme switches still recolor through `Commons.Color`.
+
+**Status: Done in this PR (transparent overlay / appearance).**

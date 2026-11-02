@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .combos import ComboEngine
-from .config import ArcadeConfig, Binding, load_config
+from .config import ArcadeConfig, Binding, config_to_public, load_config
 from .linux_input import (
     ABS_HAT0X,
     ABS_HAT0Y,
@@ -75,7 +75,16 @@ class ArcadeDaemon:
         self.engine.reset()
         self.nav.configure(self.cfg.input)
         self.nav.reset()
-        emit({"t": "config", "ok": not self.cfg.errors, "errors": self.cfg.errors})
+        self._emit_config()
+
+    def _emit_config(self) -> None:
+        pub = config_to_public(self.cfg)
+        emit({
+            "t": "config",
+            "ok": not self.cfg.errors,
+            "errors": self.cfg.errors,
+            "appearance": pub["appearance"],
+        })
 
     def refresh_devices(self) -> None:
         ignore = self.cfg.input.get("ignore_steam_virtual_pad", "auto")
@@ -407,10 +416,7 @@ class ArcadeDaemon:
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "_running", False))
 
         emit({"t": "hello", "version": 1, "pid": os.getpid()})
-        if self.cfg.errors:
-            emit({"t": "config", "ok": False, "errors": self.cfg.errors})
-        else:
-            emit({"t": "config", "ok": True, "errors": []})
+        self._emit_config()
         self._load_library()
         self.refresh_devices()
 

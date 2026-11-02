@@ -41,6 +41,12 @@ Item {
   property string sessionWindow: ""
   property var pads: []
   property var configErrors: []
+  property var appearance: ({
+    backgroundOpacity: 0.4,
+    blur: true,
+    dynamicTint: true,
+    animations: "full"
+  })
   property bool cheatSheetOpen: false
   property bool daemonReady: false
   property bool quickMenuWanted: false
@@ -310,6 +316,8 @@ Item {
       root.pads = msg.pads || []
     } else if (t === "config") {
       root.configErrors = msg.errors || []
+      if (msg.appearance)
+        root.appearance = Model.appearanceFromAny(msg.appearance)
     } else if (t === "nav") {
       root.nav(msg.dir || "", !!msg.repeat)
     } else if (t === "intent") {
@@ -419,7 +427,7 @@ Item {
     interval: 300
     repeat: false
     onTriggered: {
-      root.log("arcade.toml changed — reloading bindings")
+      root.log("arcade.toml changed — reloading bindings and appearance")
       root.sendDaemon({ t: "reload" })
       if (!userConfigProbe.running)
         userConfigProbe.running = true

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install Omarchy Arcade integration (Hyprland bind + Gaming menu rows).
+# Install Omarchy Arcade integration (Hyprland bind + overlay blur + Gaming menu rows).
 # `omarchy plugin add` does not run this — call it after enable.
 #
 # Usage:
