@@ -3,13 +3,19 @@
 Omarchy themes often ship ``decoration.blur.enabled = false``. A layer
 rule alone then does nothing. This helper:
 
-- applies Hyprland 0.53+ ``match:namespace`` rules (and the older ``blur, ns``)
-- turns decoration blur on while Arcade is open if it was off
-- reports the live ``hyprctl layers`` namespaces so QML can log them
+- detects the Hyprland config parser: Lua (0.55+/Omarchy 4) rejects
+  ``hyprctl keyword`` with *keyword can't work with non-legacy parsers.
+  Use eval.* (exit 0 — a silent no-op)
+- on Lua, uses ``hyprctl eval`` for ``hl.config`` (decoration blur) and
+  ``hl.layer_rule`` (named overlay rule)
+- on hyprlang, still uses ``hyprctl keyword``
+- never trusts exit codes: only an ``ok`` response counts, and
+  ``active`` is true only after ``getoption decoration:blur:enabled``
+  reads true
 
-Hyprland 0.56 config is Lua ``hl.layer_rule({ match = { namespace = … },
-blur = true, ignore_alpha = 0.2 })`` (see ``hypr/arcade.lua``). Do **not**
-query ``hyprctl -j layerrules`` — that request is unknown on 0.56.2.
+Do **not** query ``hyprctl -j layerrules`` — unknown on 0.56.2.
+``hyprctl layers`` may omit the overlay if this runs before the layer
+maps; do not gate frost on ``matched``.
 """
 
 from __future__ import annotations
@@ -19,11 +25,10 @@ import subprocess
 from typing import Any
 
 NAMESPACE = "matt-dance-arcade"
+RULE_NAME = "matt-dance-arcade-blur"
 FALLBACK_OPACITY = 0.7
 
-# 0.53+ / keyword form. 0.56 prefers the Lua named rule in arcade.lua;
-# these are the documented hyprctl keyword equivalents (effects may be
-# combined or split). `hyprctl -j layerrules` is unknown — never query it.
+# Hyprlang / keyword form (legacy parser only).
 _NEW_RULES_ON = (
     "blur on, ignore_alpha 0.2, xray off, match:namespace {ns}",
     "blur on, match:namespace {ns}",
@@ -61,6 +66,25 @@ def _run(args: list[str], timeout: float = 2.0) -> tuple[int, str, str]:
 
 def hyprctl(*args: str) -> tuple[int, str, str]:
     return _run(["hyprctl", *args])
+
+
+def response_text(out: str, err: str) -> str:
+    return ((out or "").strip() or (err or "").strip())
+
+
+def response_is_ok(out: str, err: str) -> bool:
+    return response_text(out, err).lower() == "ok"
+
+
+def response_wants_eval(out: str, err: str) -> bool:
+    blob = f"{out}\n{err}".lower()
+    return "non-legacy" in blob or "use eval" in blob
+
+
+def probe_uses_eval() -> bool:
+    """True when ``hyprctl keyword`` is rejected by the Lua config parser."""
+    _, out, err = hyprctl("keyword", "arcade-probe-nonlegacy")
+    return response_wants_eval(out, err)
 
 
 def _parse_option(text: str) -> Any:
@@ -129,16 +153,61 @@ def list_layer_namespaces() -> list[str]:
     return collect_namespaces(payload)
 
 
+def _lua_str(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def decoration_enabled_lua(enabled: bool) -> str:
+    return f"hl.config({{decoration={{blur={{enabled={'true' if enabled else 'false'}}}}}}})"
+
+
+def decoration_size_lua(size: int) -> str:
+    return f"hl.config({{decoration={{blur={{size={int(size)}}}}}}})"
+
+
+def layer_rule_lua(namespace: str, enabled: bool) -> str:
+    ns = _lua_str(namespace)
+    name = _lua_str(RULE_NAME)
+    if enabled:
+        return (
+            f"hl.layer_rule({{name={name},match={{namespace={ns}}},"
+            f"blur=true,ignore_alpha=0.2,xray=false}})"
+        )
+    return (
+        f"local r=hl.layer_rule({{name={name},match={{namespace={ns}}},"
+        f"blur=false,ignore_alpha=1,xray=false}});"
+        f"if r and r.set_enabled then r:set_enabled(false) end"
+    )
+
+
+def eval_lua(expr: str) -> tuple[bool, str]:
+    code, out, err = hyprctl("eval", expr)
+    if response_is_ok(out, err):
+        return True, "ok"
+    return False, response_text(out, err) or f"exit {code}"
+
+
+def keyword(args: list[str]) -> tuple[bool, str]:
+    code, out, err = hyprctl("keyword", *args)
+    if response_wants_eval(out, err):
+        return False, response_text(out, err) or "keyword rejected (use eval)"
+    if response_is_ok(out, err):
+        return True, "ok"
+    return False, response_text(out, err) or f"exit {code}"
+
+
 def keyword_layerrule(rule: str) -> tuple[bool, str]:
-    # Prefer `hyprctl keyword layerrule VALUE`. Some builds want `=`.
+    last = "keyword layerrule failed"
     for args in (
-        ["keyword", "layerrule", rule],
-        ["keyword", f"layerrule = {rule}"],
+        ["layerrule", rule],
+        [f"layerrule = {rule}"],
     ):
-        code, out, err = hyprctl(*args)
-        if code == 0:
+        ok, detail = keyword(args)
+        if ok:
             return True, rule
-        last = (err or out or f"exit {code}").strip()
+        last = detail
+        if response_wants_eval("", detail):
+            return False, detail
     return False, last
 
 
@@ -152,6 +221,31 @@ def _extra_namespaces(live: list[str], primary: str) -> list[str]:
     return extra
 
 
+class _Setter:
+    def __init__(self) -> None:
+        self.use_eval = probe_uses_eval()
+        self.errors: list[str] = []
+        self.applied: list[str] = []
+
+    def apply(self, keyword_args: list[str], lua: str, label: str) -> bool:
+        if not self.use_eval:
+            ok, detail = keyword(keyword_args)
+            if ok:
+                self.applied.append(label)
+                return True
+            if response_wants_eval("", detail):
+                self.use_eval = True
+            else:
+                self.errors.append(detail)
+                return False
+        ok, detail = eval_lua(lua)
+        if ok:
+            self.applied.append(lua)
+            return True
+        self.errors.append(detail)
+        return False
+
+
 def apply_layer_blur(
     enabled: bool,
     namespace: str = NAMESPACE,
@@ -160,62 +254,95 @@ def apply_layer_blur(
     ns = namespace or NAMESPACE
     live = list_layer_namespaces()
     targets = [ns]
-    if not any(ns in item for item in live):
-        targets.extend(_extra_namespaces(live, ns))
+    extras = _extra_namespaces(live, ns)
+    if extras:
+        targets.extend(extras)
 
-    decoration = decoration_blur_enabled()
+    original = decoration_blur_enabled()
     size = decoration_blur_size()
+    setter = _Setter()
     flipped = False
-    errors: list[str] = []
-    applied: list[str] = []
 
     if restore_decoration and not enabled:
-        code, out, err = hyprctl("keyword", "decoration:blur:enabled", "false")
-        if code == 0:
-            decoration = False
-        elif (err or out).strip():
-            errors.append((err or out).strip())
+        # QML only sends --restore-decoration when Arcade flipped blur on.
+        setter.apply(
+            ["decoration:blur:enabled", "false"],
+            decoration_enabled_lua(False),
+            "decoration:blur:enabled false",
+        )
 
-    if enabled and decoration is False:
-        code, out, err = hyprctl("keyword", "decoration:blur:enabled", "true")
-        if code == 0:
+    if enabled and original is False:
+        if setter.apply(
+            ["decoration:blur:enabled", "true"],
+            decoration_enabled_lua(True),
+            "decoration:blur:enabled true",
+        ):
             flipped = True
-            decoration = True
-        else:
-            errors.append((err or out or "could not enable decoration:blur").strip())
 
     if enabled and size == 0:
-        code, _, err = hyprctl("keyword", "decoration:blur:size", "8")
-        if code != 0 and err.strip():
-            errors.append(err.strip())
+        setter.apply(
+            ["decoration:blur:size", "8"],
+            decoration_size_lua(8),
+            "decoration:blur:size 8",
+        )
 
-    templates = (_NEW_RULES_ON + _OLD_RULES_ON) if enabled else (_NEW_RULES_OFF + _OLD_RULES_OFF)
-    ok_any = False
-    for target in targets:
-        for tmpl in templates:
-            rule = tmpl.format(ns=target)
-            ok, detail = keyword_layerrule(rule)
+    if setter.use_eval:
+        for target in (ns,):
+            lua = layer_rule_lua(target, enabled)
+            ok, detail = eval_lua(lua)
             if ok:
-                ok_any = True
-                applied.append(rule)
-            elif detail:
-                errors.append(detail)
+                setter.applied.append(lua)
+            else:
+                setter.errors.append(detail)
+    else:
+        templates = (_NEW_RULES_ON + _OLD_RULES_ON) if enabled else (_NEW_RULES_OFF + _OLD_RULES_OFF)
+        for target in targets:
+            for tmpl in templates:
+                rule = tmpl.format(ns=target)
+                ok, detail = keyword_layerrule(rule)
+                if ok:
+                    setter.applied.append(rule)
+                elif response_wants_eval("", detail):
+                    setter.use_eval = True
+                    lua = layer_rule_lua(ns, enabled)
+                    ev_ok, ev_detail = eval_lua(lua)
+                    if ev_ok:
+                        setter.applied.append(lua)
+                    else:
+                        setter.errors.append(ev_detail)
+                    break
+                elif detail:
+                    setter.errors.append(detail)
+            if setter.use_eval:
+                break
+
+    # Never trust keyword/eval exit codes. Frost is live only if getoption
+    # says decoration blur is on. Do not require matched[] — layers often
+    # omit the overlay if this runs before the surface maps.
+    decoration = decoration_blur_enabled()
+    if enabled and flipped and decoration is not True:
+        flipped = False
+        setter.errors.append("decoration:blur:enabled is not true after apply")
+    elif enabled and decoration is not True:
+        setter.errors.append("decoration:blur:enabled is not true after apply")
 
     live_after = list_layer_namespaces() or live
     matched = [item for item in live_after if any(t in item for t in targets)]
-    active = bool(enabled and decoration is not False and ok_any)
+    active = bool(enabled and decoration is True)
 
     return {
-        "ok": ok_any or not enabled,
+        "ok": (not enabled) or active,
         "wanted": enabled,
         "active": active,
+        "parser": "eval" if setter.use_eval else "keyword",
         "namespace": ns,
         "targets": targets,
         "namespaces": live_after,
         "matched": matched,
-        "applied": applied,
+        "applied": setter.applied,
         "decorationBlur": decoration,
+        "decorationWas": original,
         "enabledDecorationBlur": flipped,
         "fallbackOpacity": FALLBACK_OPACITY,
-        "errors": errors[:8],
+        "errors": setter.errors[:8],
     }

@@ -320,6 +320,7 @@ Item {
     console.warn("matt-dance.arcade: layer namespace=" + (data.namespace || root.layerNamespace)
                  + " hypr=[" + ((data.namespaces || []).join(",") || "-") + "]"
                  + " matched=[" + ((data.matched || []).join(",") || "-") + "]"
+                 + " parser=" + (data.parser || "?")
                  + " decorationBlur=" + data.decorationBlur
                  + " active=" + !!data.active
                  + " fallback=" + root.blurUnavailable)

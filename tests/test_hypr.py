@@ -25,6 +25,72 @@ LAYERS = {
     }
 }
 
+EARLY_LAYERS = {
+    "HDMI-A-1": {
+        "levels": {
+            "0": [{"namespace": "omarchy-background", "w": 1920, "h": 1080}],
+            "2": [{"namespace": "omarchy-bar", "w": 1920, "h": 36}],
+        }
+    }
+}
+
+NONLEGACY = "keyword can't work with non-legacy parsers. Use eval."
+
+
+class FakeHypr:
+    """Stateful hyprctl stand-in. ``parser='eval'`` is Hyprland 0.56 Lua."""
+
+    def __init__(
+        self,
+        *,
+        parser: str = "keyword",
+        blur: int = 0,
+        size: int = 8,
+        layers: dict | None = None,
+        eval_ok: bool = True,
+    ):
+        self.parser = parser
+        self.blur = blur
+        self.size = size
+        self.layers = layers if layers is not None else LAYERS
+        self.eval_ok = eval_ok
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str):
+        self.calls.append(args)
+        if args[:3] == ("-j", "getoption", "decoration:blur:enabled"):
+            return 0, json.dumps({"int": int(self.blur)}), ""
+        if args[:3] == ("-j", "getoption", "decoration:blur:size"):
+            return 0, json.dumps({"int": int(self.size)}), ""
+        if args[:2] == ("-j", "layers"):
+            return 0, json.dumps(self.layers), ""
+        if args[0] == "keyword":
+            if self.parser == "eval":
+                return 0, NONLEGACY, ""
+            if args[1:3] == ("decoration:blur:enabled", "true"):
+                self.blur = 1
+                return 0, "ok", ""
+            if args[1:3] == ("decoration:blur:enabled", "false"):
+                self.blur = 0
+                return 0, "ok", ""
+            if args[1] == "decoration:blur:size":
+                self.size = int(args[2])
+                return 0, "ok", ""
+            return 0, "ok", ""
+        if args[0] == "eval":
+            if not self.eval_ok:
+                return 0, "nope", ""
+            expr = args[1] if len(args) > 1 else ""
+            compact = expr.replace(" ", "")
+            if "enabled=true" in compact:
+                self.blur = 1
+            if "enabled=false" in compact:
+                self.blur = 0
+            if "size=" in compact:
+                self.size = 8
+            return 0, "ok", ""
+        return 1, "", "unknown"
+
 
 class TestCollectNamespaces(unittest.TestCase):
     def test_walks_hyprctl_layers_json(self):
@@ -40,23 +106,12 @@ class TestCollectNamespaces(unittest.TestCase):
 
 class TestApplyLayerBlur(unittest.TestCase):
     def test_applies_new_and_old_syntax_and_enables_decoration(self):
-        calls: list[tuple[str, ...]] = []
+        fake = FakeHypr(parser="keyword", blur=0)
 
-        def fake_hyprctl(*args: str):
-            calls.append(args)
-            if args[:3] == ("-j", "getoption", "decoration:blur:enabled"):
-                return 0, json.dumps({"int": 0}), ""
-            if args[:3] == ("-j", "getoption", "decoration:blur:size"):
-                return 0, json.dumps({"int": 8}), ""
-            if args[:2] == ("-j", "layers"):
-                return 0, json.dumps(LAYERS), ""
-            if args[0] == "keyword":
-                return 0, "ok", ""
-            return 1, "", "unknown"
-
-        with mock.patch("arcade.hypr.hyprctl", side_effect=fake_hyprctl):
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
             result = apply_layer_blur(True, namespace=NAMESPACE)
 
+        self.assertEqual(result["parser"], "keyword")
         self.assertTrue(result["enabledDecorationBlur"])
         self.assertTrue(result["decorationBlur"])
         self.assertTrue(result["active"])
@@ -64,7 +119,7 @@ class TestApplyLayerBlur(unittest.TestCase):
         self.assertTrue(any("blur on, match:namespace" in r for r in result["applied"]))
         self.assertTrue(any(r.startswith("blur, ") for r in result["applied"]))
         self.assertEqual(result["fallbackOpacity"], 0.7)
-        self.assertIn(("keyword", "decoration:blur:enabled", "true"), calls)
+        self.assertIn(("keyword", "decoration:blur:enabled", "true"), fake.calls)
 
     def test_stays_inactive_when_decoration_blur_cannot_enable(self):
         def fake_hyprctl(*args: str):
@@ -88,28 +143,70 @@ class TestApplyLayerBlur(unittest.TestCase):
         self.assertGreaterEqual(result["fallbackOpacity"], FALLBACK_OPACITY)
 
     def test_restore_decoration_on_close(self):
-        calls: list[tuple[str, ...]] = []
+        fake = FakeHypr(parser="keyword", blur=1)
 
-        def fake_hyprctl(*args: str):
-            calls.append(args)
-            if args[:3] == ("-j", "getoption", "decoration:blur:enabled"):
-                return 0, json.dumps({"int": 1}), ""
-            if args[:3] == ("-j", "getoption", "decoration:blur:size"):
-                return 0, json.dumps({"int": 8}), ""
-            if args[:2] == ("-j", "layers"):
-                return 0, json.dumps(LAYERS), ""
-            if args[0] == "keyword":
-                return 0, "ok", ""
-            return 1, "", "unknown"
-
-        with mock.patch("arcade.hypr.hyprctl", side_effect=fake_hyprctl):
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
             result = apply_layer_blur(False, namespace=NAMESPACE, restore_decoration=True)
 
         self.assertTrue(result["ok"])
         self.assertFalse(result["wanted"])
         self.assertFalse(result["active"])
-        self.assertIn(("keyword", "decoration:blur:enabled", "false"), calls)
+        self.assertEqual(fake.blur, 0)
+        self.assertIn(("keyword", "decoration:blur:enabled", "false"), fake.calls)
         self.assertTrue(any("blur off" in r for r in result["applied"]))
+
+    def test_nonlegacy_keyword_is_not_success(self):
+        """0.56.2: keyword exits 0 with 'Use eval' and getoption stays false."""
+        fake = FakeHypr(parser="eval", blur=0, eval_ok=False)
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            result = apply_layer_blur(True, namespace=NAMESPACE)
+
+        self.assertEqual(result["parser"], "eval")
+        self.assertFalse(result["active"])
+        self.assertFalse(result["decorationBlur"])
+        self.assertFalse(result["ok"])
+        self.assertGreaterEqual(result["fallbackOpacity"], FALLBACK_OPACITY)
+        self.assertTrue(result["errors"])
+        self.assertFalse(any("blur on" in r for r in result["applied"]))
+
+    def test_eval_path_enables_decoration_and_layer_rule(self):
+        fake = FakeHypr(parser="eval", blur=0)
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            result = apply_layer_blur(True, namespace=NAMESPACE)
+
+        self.assertEqual(result["parser"], "eval")
+        self.assertTrue(result["active"])
+        self.assertTrue(result["decorationBlur"])
+        self.assertTrue(result["enabledDecorationBlur"])
+        self.assertTrue(any("hl.config" in r and "enabled=true" in r for r in result["applied"]))
+        self.assertTrue(any("hl.layer_rule" in r and "blur=true" in r for r in result["applied"]))
+        self.assertTrue(any(c[0] == "eval" for c in fake.calls))
+        self.assertEqual(fake.blur, 1)
+
+    def test_eval_restore_on_close(self):
+        fake = FakeHypr(parser="eval", blur=1)
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            result = apply_layer_blur(False, namespace=NAMESPACE, restore_decoration=True)
+
+        self.assertFalse(result["wanted"])
+        self.assertFalse(result["active"])
+        self.assertEqual(fake.blur, 0)
+        self.assertTrue(any("enabled=false" in r for r in result["applied"]))
+        self.assertTrue(any("blur=false" in r or "set_enabled" in r for r in result["applied"]))
+
+    def test_active_does_not_require_matched_layers(self):
+        fake = FakeHypr(parser="eval", blur=0, layers=EARLY_LAYERS)
+
+        with mock.patch("arcade.hypr.hyprctl", side_effect=fake):
+            result = apply_layer_blur(True, namespace=NAMESPACE)
+
+        self.assertEqual(result["namespaces"], ["omarchy-background", "omarchy-bar"])
+        self.assertEqual(result["matched"], [])
+        self.assertTrue(result["active"])
+        self.assertTrue(result["decorationBlur"])
 
 
 class TestArcadeHyprCli(unittest.TestCase):
@@ -126,22 +223,12 @@ class TestArcadeHyprCli(unittest.TestCase):
         loader.exec_module(mod)
         return mod
 
-    def _fake_hyprctl(self, *args: str):
-        if args[:3] == ("-j", "getoption", "decoration:blur:enabled"):
-            return 0, json.dumps({"int": 0}), ""
-        if args[:3] == ("-j", "getoption", "decoration:blur:size"):
-            return 0, json.dumps({"int": 8}), ""
-        if args[:2] == ("-j", "layers"):
-            return 0, json.dumps(LAYERS), ""
-        if args[0] == "keyword":
-            return 0, "ok", ""
-        return 1, "", "unknown"
-
     def test_qml_open_argv(self):
         mod = self._load()
+        fake = FakeHypr(parser="eval", blur=0)
         buf = io.StringIO()
         with (
-            mock.patch("arcade.hypr.hyprctl", side_effect=self._fake_hyprctl),
+            mock.patch("arcade.hypr.hyprctl", side_effect=fake),
             mock.patch.object(sys, "stdout", buf),
         ):
             code = mod.main(list(self.QML_OPEN))
@@ -150,12 +237,14 @@ class TestArcadeHyprCli(unittest.TestCase):
         self.assertEqual(data["namespace"], "matt-dance-arcade")
         self.assertTrue(data["active"])
         self.assertTrue(data["enabledDecorationBlur"])
+        self.assertEqual(data["parser"], "eval")
 
     def test_qml_close_argv_restores_decoration(self):
         mod = self._load()
+        fake = FakeHypr(parser="eval", blur=1)
         buf = io.StringIO()
         with (
-            mock.patch("arcade.hypr.hyprctl", side_effect=self._fake_hyprctl),
+            mock.patch("arcade.hypr.hyprctl", side_effect=fake),
             mock.patch.object(sys, "stdout", buf),
         ):
             code = mod.main(list(self.QML_CLOSE))
@@ -163,6 +252,21 @@ class TestArcadeHyprCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(data["wanted"])
         self.assertFalse(data["active"])
+        self.assertEqual(fake.blur, 0)
+
+    def test_nonlegacy_cli_exits_nonzero_so_fallback_applies(self):
+        mod = self._load()
+        fake = FakeHypr(parser="eval", blur=0, eval_ok=False)
+        buf = io.StringIO()
+        with (
+            mock.patch("arcade.hypr.hyprctl", side_effect=fake),
+            mock.patch.object(sys, "stdout", buf),
+        ):
+            code = mod.main(list(self.QML_OPEN))
+        data = json.loads(buf.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(data["active"])
+        self.assertGreaterEqual(data["fallbackOpacity"], FALLBACK_OPACITY)
 
     def test_subprocess_exact_qml_argv(self):
         """Spawn the same argv list Arcade.qml builds (python + apply --namespace)."""
@@ -181,9 +285,10 @@ class TestArcadeHyprCli(unittest.TestCase):
 
     def test_parent_namespace_still_works(self):
         mod = self._load()
+        fake = FakeHypr()
         buf = io.StringIO()
         with (
-            mock.patch("arcade.hypr.hyprctl", side_effect=self._fake_hyprctl),
+            mock.patch("arcade.hypr.hyprctl", side_effect=fake),
             mock.patch.object(sys, "stdout", buf),
         ):
             code = mod.main(["--namespace", "matt-dance-arcade", "status"])
@@ -202,7 +307,7 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("effectiveOpacity", qml)
         self.assertIn("blurUnavailable", qml)
         self.assertIn("property bool hyprBlurActive: false", qml)
-        self.assertIn('root.hyprBlurActive = false', qml)
+        self.assertIn("root.hyprBlurActive = false", qml)
         self.assertIn("frost unavailable", qml)
         self.assertIn('"apply", "--namespace", root.layerNamespace', qml)
         self.assertIn("--restore-decoration", qml)
@@ -214,9 +319,13 @@ class TestOverlayHyprWiring(unittest.TestCase):
         self.assertIn("ignore_alpha", lua)
         self.assertIn('name = "matt-dance-arcade-blur"', lua)
         self.assertIn("match = { namespace = ARCADE_NS }", lua)
+        self.assertIn("hyprctl eval", lua)
         hypr_py = (ROOT / "arcade" / "hypr.py").read_text(encoding="utf-8")
         self.assertNotIn('"layerrules"', hypr_py)
         self.assertNotIn("'layerrules'", hypr_py)
+        self.assertIn("hl.config", hypr_py)
+        self.assertIn("non-legacy", hypr_py)
+        self.assertIn("probe_uses_eval", hypr_py)
         menu = (ROOT / "QuickMenu.qml").read_text(encoding="utf-8")
         self.assertIn("surfaceFormat.opaque: false", menu)
         self.assertIn('WlrLayershell.namespace: "matt-dance-arcade-quickmenu"', menu)

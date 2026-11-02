@@ -22,11 +22,14 @@ o.bind("XF86Game", "Arcade", "omarchy-shell shell toggle matt-dance.arcade '{}'"
 --     xray = false,
 --   })
 -- See wiki Configuring / Layer rules. `hyprctl -j layerrules` is an
--- unknown request on 0.56.2 — do not query it. keyword layerrule is a
--- best-effort runtime fallback (0.53+ `blur on, match:namespace` plus the
--- older `blur, ns` form). Many Omarchy themes ship
--- decoration.blur.enabled = false — layer rules then do nothing until
--- Arcade turns decoration blur on for the session and restores it on close.
+-- unknown request on 0.56.2 — do not query it. `hyprctl keyword` is a
+-- no-op on the Lua parser (exit 0, "Use eval"). Runtime apply is
+-- arcade-hypr via `hyprctl eval 'hl.config({decoration={blur={enabled=true}}})'`
+-- and `hyprctl eval 'hl.layer_rule({...})'`. Legacy hyprlang hosts still
+-- accept `blur on, match:namespace matt-dance-arcade` from arcade-hypr.
+-- Many Omarchy themes ship decoration.blur.enabled = false — layer rules
+-- then do nothing until Arcade turns decoration blur on for the session
+-- and restores it on close.
 local ARCADE_NS = "matt-dance-arcade"
 
 pcall(function()
@@ -40,23 +43,3 @@ pcall(function()
     })
   end
 end)
-
-local function arcade_keyword(rule)
-  local quoted
-  if o and o.shell_quote then
-    quoted = o.shell_quote(rule)
-  else
-    quoted = "'" .. tostring(rule):gsub("'", "'\\''") .. "'"
-  end
-  if hl and hl.exec_cmd then
-    pcall(hl.exec_cmd, "hyprctl keyword layerrule " .. quoted)
-  else
-    os.execute("hyprctl keyword layerrule " .. quoted .. " >/dev/null 2>&1")
-  end
-end
-
--- 0.53+ syntax first, then the pre-0.53 form.
-arcade_keyword("blur on, match:namespace " .. ARCADE_NS)
-arcade_keyword("ignore_alpha 0.2, match:namespace " .. ARCADE_NS)
-arcade_keyword("blur, " .. ARCADE_NS)
-arcade_keyword("ignorealpha 0.2, " .. ARCADE_NS)
