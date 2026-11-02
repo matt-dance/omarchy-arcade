@@ -243,7 +243,7 @@ Prove the four risky seams before building UI.
 - SteamGridDB art (portrait, hero, logo) with an on-disk cache and rate limiting, using the user's own key (see Q6).
 - A Game details screen: hero, playtime, last played, source, favorite, hide, "open in launcher".
 - Search with an on-screen keyboard; sort and filter.
-- Background rescans on change: watch the Steam `steamapps/`, Heroic `installed.json`, Lutris `pga.db` and `applications/` directories through `FileView`/inotify, with no polling.
+- Background rescans on change: `arcaded` watches Steam `steamapps/`, Heroic `installed.json`, Lutris `pga.db` and `applications/` through inotify (poll fallback), then the service runs `arcade-scan`.
 
 **Acceptance:**
 

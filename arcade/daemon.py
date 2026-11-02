@@ -18,6 +18,7 @@ from typing import Any, TextIO
 
 from .combos import ComboEngine
 from .config import ArcadeConfig, Binding, load_config
+from .library_watch import LibraryMonitor
 from .linux_input import (
     ABS_HAT0X,
     ABS_HAT0Y,
@@ -68,6 +69,7 @@ class ArcadeDaemon:
         self._stick: dict[str, dict[str, float]] = {}  # path -> {x, y} normalized
         self._pads_payload: list[dict] | None = None
         self._known_pads: set[str] | None = None  # None until the first device scan
+        self.library = LibraryMonitor(self.cfg, on_rescan=self._request_rescan)
 
     def reload(self) -> None:
         self.cfg = load_config(self.plugin_dir)
@@ -75,7 +77,16 @@ class ArcadeDaemon:
         self.engine.reset()
         self.nav.configure(self.cfg.input)
         self.nav.reset()
+        self.library.configure(self.cfg)
         emit({"t": "config", "ok": not self.cfg.errors, "errors": self.cfg.errors})
+        emit(
+            {
+                "t": "watch",
+                "backend": self.library.backend,
+                "paths": self.library.path_count,
+                "auto": bool(self.cfg.library.get("auto_watch", True)),
+            }
+        )
 
     def refresh_devices(self) -> None:
         ignore = self.cfg.input.get("ignore_steam_virtual_pad", "auto")
@@ -275,10 +286,13 @@ class ArcadeDaemon:
             return
         typ = msg.get("t")
         if typ == "mode":
+            was_ui = self.ui_mode
             self.ui_mode = bool(msg.get("ui"))
             if not self.ui_mode:
                 self.nav.reset()
             emit({"t": "mode", "ui": self.ui_mode})
+            if self.ui_mode and not was_ui:
+                self.library.on_overlay_open()
         elif typ == "reload":
             self.reload()
             self.refresh_devices()
@@ -402,6 +416,9 @@ class ArcadeDaemon:
             )
             self._games_by_id[game.id] = game
 
+    def _request_rescan(self, reason: str) -> None:
+        emit({"t": "rescan", "reason": reason})
+
     def run(self) -> int:
         signal.signal(signal.SIGINT, lambda *_: setattr(self, "_running", False))
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "_running", False))
@@ -413,6 +430,15 @@ class ArcadeDaemon:
             emit({"t": "config", "ok": True, "errors": []})
         self._load_library()
         self.refresh_devices()
+        self.library.start()
+        emit(
+            {
+                "t": "watch",
+                "backend": self.library.backend,
+                "paths": self.library.path_count,
+                "auto": bool(self.cfg.library.get("auto_watch", True)),
+            }
+        )
 
         stdin_fd = sys.stdin.fileno()
         # Make stdin non-blocking
@@ -440,12 +466,19 @@ class ArcadeDaemon:
                     self._record_session_end(changed)
                     self.tracker.clear()
 
-            deadlines = [d for d in (self.engine.next_deadline(), self.nav.next_deadline()) if d is not None]
+            self.library.tick(now)
+
+            deadlines = [
+                d
+                for d in (self.engine.next_deadline(), self.nav.next_deadline(), self.library.next_deadline())
+                if d is not None
+            ]
             timeout = 0.05
             if deadlines:
                 timeout = max(0.0, min(timeout, min(deadlines) - now))
 
-            rlist = list(self._fds.keys()) + [stdin_fd]
+            watch_fds = self.library.fds()
+            rlist = list(self._fds.keys()) + [stdin_fd] + watch_fds
             try:
                 readable, _, _ = select.select(rlist, [], [], timeout)
             except InterruptedError:
@@ -469,6 +502,9 @@ class ArcadeDaemon:
             for fd in readable:
                 if fd == stdin_fd:
                     continue
+                if fd in watch_fds:
+                    self.library.on_readable(fd)
+                    continue
                 info = self._fds.get(fd)
                 if info:
                     try:
@@ -480,6 +516,7 @@ class ArcadeDaemon:
                             pass
                         self._fds.pop(fd, None)
 
+        self.library.close()
         self.keyboard.close()
         for fd in list(self._fds):
             try:

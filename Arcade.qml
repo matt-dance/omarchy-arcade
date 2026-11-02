@@ -389,11 +389,13 @@ Item {
   }
 
   function ensureLibrary() {
-    if (root.libraryGames().length)
+    var stale = root.service && typeof root.service.libraryIsStale === "function" && root.service.libraryIsStale()
+    if (root.libraryGames().length && !stale)
       return
     if (root.service && typeof root.service.rescan === "function")
       root.service.rescan()
-    root.startLocalScan()
+    if (!root.libraryGames().length || !root.service)
+      root.startLocalScan()
   }
 
   function launchResolved(game) {

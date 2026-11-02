@@ -27,6 +27,8 @@ class TestLoadConfig(unittest.TestCase):
     def test_defaults(self):
         root = Path(__file__).resolve().parent.parent
         cfg = load_config(plugin_dir=root, user_path=Path("/nonexistent"))
+        self.assertTrue(cfg.library.get("auto_watch"))
+        self.assertEqual(cfg.library.get("poll_interval_s"), 30)
         self.assertTrue(any(b.action == "arcade.toggle" for b in cfg.bindings))
         guide_tap = [b for b in cfg.bindings if b.tap and b.combo == ("GUIDE",)]
         self.assertEqual(len(guide_tap), 1)

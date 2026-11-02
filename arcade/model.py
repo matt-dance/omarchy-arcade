@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -432,6 +433,7 @@ def parse_library_text(text: str | None) -> dict[str, Any]:
         "errors": data.get("errors") or [],
         "ok": True,
         "empty": len(games) == 0,
+        "scannedAt": data.get("scannedAt") or data.get("scanned_at"),
     }
 
 
@@ -474,6 +476,7 @@ def write_library(path: Path, games: list[Game], errors: list[ScanError]) -> Non
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": 1,
+        "scannedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "games": [g.to_dict() for g in games],
         "errors": [e.to_dict() for e in errors],
     }
