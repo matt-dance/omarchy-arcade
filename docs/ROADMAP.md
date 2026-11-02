@@ -198,4 +198,4 @@ full|reduced|off` and the shell reduce-motion hint gate motion. Settings exposes
 opacity, blur, tint, and animations; `bin/arcade-config` writes the user
 `arcade.toml`. Theme switches still recolor through `Commons.Color`.
 
-**Status: Done in this PR (transparent overlay / appearance).**
+**Status: Done in [#11](https://github.com/matt-dance/omarchy-arcade/pull/11) (transparent overlay / appearance).**
