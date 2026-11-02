@@ -245,7 +245,16 @@ animations = "full"        # full | reduced | off
 
 Edits reload live, same as bindings. Settings (`Start`) exposes opacity, blur, tint, and animations. `reduced` / `off` skip ken-burns, grain pulse, and card-scale motion; the shell's reduce-motion hint is treated as `reduced`.
 
-`bin/arcade-config show` prints the merged table. `bin/arcade-config set background_opacity 0.35` writes the user override. The Hyprland rules live in `~/.config/hypr/arcade.lua` (`hl.layer_rule` for namespace `matt-dance-arcade`, `blur` + `ignore_alpha 0.2`). Turning blur off in Settings raises `ignorealpha` so the frost goes away until the next Hyprland reload reapplies the file (then Arcade reapplies the preference when it opens).
+`bin/arcade-config show` prints the merged table. `bin/arcade-config set background_opacity 0.35` writes the user override.
+
+Hyprland frost needs three things: the layer namespace (`WlrLayershell.namespace` = `matt-dance-arcade`, logged as `matt-dance.arcade: layer namespace=…`), a `layerrule` for that name, and `decoration.blur.enabled`. Many Omarchy themes ship blur **off**. On open, Arcade:
+
+1. Logs the QML namespace and `hyprctl layers` names
+2. Applies `hl.layer_rule` from `arcade.lua` **and** `hyprctl keyword layerrule` (`blur on, match:namespace matt-dance-arcade` plus the older `blur, ns` form)
+3. Turns decoration blur on for the session if it was off (restored when Arcade closes)
+4. If frost still is not available, raises the fill to at least **0.7** and darkens card scrims so sharp windows behind stay readable
+
+`bin/arcade-hypr apply` is the helper. Settings shows **On (no frost)** when the fallback fill is in use.
 
 ## Layout
 
@@ -264,6 +273,7 @@ Edits reload live, same as bindings. Settings (`Start`) exposes opacity, blur, t
 ├── bin/arcade-keys        # Optional metadata key setup (status/set/test/remove/setup)
 ├── bin/arcade-state       # Favorites / hidden / sort edits (state.json)
 ├── bin/arcade-config      # Read/write [appearance] in the user arcade.toml
+├── bin/arcade-hypr        # Apply / probe Hyprland layer blur for the overlay
 ├── ArcadeBackdrop.qml     # Transparent fill, game tint, vignette, grain
 ├── assets/grain.png       # Tiled film grain (static, not a live shader)
 ├── arcade/                # Python package
@@ -291,6 +301,7 @@ python3 bin/arcade-scan --json
 python3 bin/arcade-meta --plugin-dir . --offline --limit 1
 python3 bin/arcade-sys items
 python3 bin/arcade-config show
+python3 bin/arcade-hypr status
 printf '{"t":"ping"}\n' | python3 bin/arcaded --plugin-dir .   # Ctrl+D to exit
 ```
 
@@ -306,7 +317,7 @@ qmllint -I "$OMARCHY_PATH/shell" Arcade.qml ArcadeBackdrop.qml QuickMenu.qml Ser
 These cannot be fully verified in CI. On a real Omarchy host with a controller:
 
 1. **Plugin load** — `omarchy plugin validate` and enable; bar stays healthy; journal shows `service loaded` and `starting arcaded`
-2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live. The desktop wallpaper shows through the overlay (not an opaque black sheet). With `blur = true` and `install.sh` applied, Hyprland frosts that wallpaper (`hyprctl layers` shows `matt-dance-arcade`)
+2. **Summon** — `Super + Ctrl + G` opens Arcade; Esc closes; theme switch recolors live. The desktop wallpaper shows through the overlay (not an opaque black sheet). Journal must show `matt-dance.arcade: layer namespace=matt-dance-arcade` and a `hypr=[…]` line. With `blur = true`, windows behind should be frosted; if Hyprland cannot blur (theme has `decoration.blur.enabled = false` and enabling it fails), the fill jumps to ~70% and cards get a stronger scrim instead of sharp browser/chat text showing through.
 3. **Scan** — with Steam/Heroic/etc installed, games appear with covers (from the service *or* `library.json` if the service is down)
 4. **Keyboard nav** — arrows/`hjkl`, Enter launch, `/` search; Home down/up between the row and Play/Options
 5. **Controller nav** — D-pad and left stick move focus; holding either repeats after a short delay and stops on release; A launches; B backs; Home left/right along the shelf; `Y` opens the on-screen keyboard and typing filters live; editing `~/.config/omarchy/arcade/arcade.toml` logs `arcade.toml changed — reloading bindings and appearance`. Start → Settings: left/right changes opacity in 5% steps, A toggles blur/tint or cycles animations, and the Home backdrop updates without restarting the shell.

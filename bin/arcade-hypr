@@ -1,0 +1,48 @@
+#!/usr/bin/python3
+"""Apply or report Hyprland layer blur for Omarchy Arcade."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.hypr import NAMESPACE, apply_layer_blur, list_layer_namespaces
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Arcade Hyprland layer blur helper")
+    parser.add_argument("--namespace", default=NAMESPACE)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_apply = sub.add_parser("apply", help="Push layerrules (and enable decoration blur if needed)")
+    p_apply.add_argument("--off", action="store_true", help="Disable blur for the overlay namespace")
+    p_apply.add_argument(
+        "--restore-decoration",
+        action="store_true",
+        help="Turn decoration.blur back off (only after Arcade enabled it)",
+    )
+    sub.add_parser("status", help="Print live layer namespaces")
+
+    args = parser.parse_args(argv)
+    if args.cmd == "status":
+        data = {
+            "namespace": args.namespace,
+            "namespaces": list_layer_namespaces(),
+        }
+    else:
+        data = apply_layer_blur(
+            enabled=not args.off,
+            namespace=args.namespace,
+            restore_decoration=args.restore_decoration,
+        )
+    print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

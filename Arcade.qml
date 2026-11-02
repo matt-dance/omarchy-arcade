@@ -66,6 +66,8 @@ Item {
   property string searchReturnScreen: "home"
   property var fileAppearance: Model.defaultAppearance()
   property int settingsIndex: 0
+  property bool hyprBlurActive: true
+  property bool hyprEnabledDecoration: false
 
   readonly property string pluginDir: Model.pluginDirPath(Quickshell.env("HOME") || "", root.manifest)
   readonly property string libraryFile: Model.libraryFilePath(
@@ -88,6 +90,8 @@ Item {
                                        && !root.keyStatus.promptDismissed
 
   readonly property string configBin: root.pluginDir + "/bin/arcade-config"
+  readonly property string hyprBin: root.pluginDir + "/bin/arcade-hypr"
+  readonly property string layerNamespace: "matt-dance-arcade"
   readonly property string userConfigFile: Model.userConfigFilePath(
     Quickshell.env("HOME") || "",
     Quickshell.env("XDG_CONFIG_HOME") || ""
@@ -138,6 +142,11 @@ Item {
   readonly property bool motionFull: root.motionMode === "full"
   readonly property bool motionOff: root.motionMode === "off"
   readonly property string focusedTintUrl: Model.tintUrl(root.focusedGame, root.selectedMeta)
+  readonly property bool blurUnavailable: root.appearance.blur && !root.hyprBlurActive
+  readonly property real effectiveOpacity: root.blurUnavailable
+                                           ? Math.max(root.appearance.backgroundOpacity, 0.7)
+                                           : root.appearance.backgroundOpacity
+  readonly property real cardScrim: root.blurUnavailable ? 0.58 : 0.28
   readonly property var settingsRows: [
     { id: "opacity", label: "Background opacity", kind: "slider" },
     { id: "blur", label: "Hyprland blur", kind: "toggle" },
@@ -200,8 +209,11 @@ Item {
       return ""
     if (row.id === "opacity")
       return Math.round(root.appearance.backgroundOpacity * 100) + "%"
-    if (row.id === "blur")
-      return root.appearance.blur ? "On" : "Off"
+    if (row.id === "blur") {
+      if (!root.appearance.blur)
+        return "Off"
+      return root.hyprBlurActive ? "On" : "On (no frost)"
+    }
     if (row.id === "tint")
       return root.appearance.dynamicTint ? "On" : "Off"
     if (row.id === "anim") {
@@ -262,13 +274,55 @@ Item {
     root.applyLayerBlur()
   }
 
+  function logLayerNamespace() {
+    var ns = root.layerNamespace
+    try {
+      if (panel && panel.WlrLayershell && panel.WlrLayershell.namespace)
+        ns = String(panel.WlrLayershell.namespace)
+    } catch (e) {}
+    console.warn("matt-dance.arcade: layer namespace=" + ns
+                 + " opened=" + root.opened
+                 + " blur=" + root.appearance.blur
+                 + " hyprActive=" + root.hyprBlurActive)
+  }
+
   function applyLayerBlur() {
-    if (!root.opened)
+    root.logLayerNamespace()
+    var args = ["/usr/bin/python3", root.hyprBin, "apply", "--namespace", root.layerNamespace]
+    if (!root.opened || !root.appearance.blur) {
+      args.push("--off")
+      if (root.hyprEnabledDecoration)
+        args.push("--restore-decoration")
+    }
+    if (hyprBlurProcess.running)
+      hyprBlurProcess.running = false
+    hyprBlurProcess.command = args
+    hyprBlurProcess.running = true
+  }
+
+  function applyHyprBlurStdout(text) {
+    if (!text || !String(text).length)
       return
-    var alpha = root.appearance.blur ? "0.2" : "1"
-    Quickshell.execDetached([
-      "hyprctl", "keyword", "layerrule", "ignorealpha " + alpha + ", matt-dance-arcade"
-    ])
+    var data
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      return
+    }
+    if (data.wanted)
+      root.hyprBlurActive = !!data.active
+    else
+      root.hyprBlurActive = false
+    if (data.enabledDecorationBlur)
+      root.hyprEnabledDecoration = true
+    if (!data.wanted)
+      root.hyprEnabledDecoration = false
+    console.warn("matt-dance.arcade: layer namespace=" + (data.namespace || root.layerNamespace)
+                 + " hypr=[" + ((data.namespaces || []).join(",") || "-") + "]"
+                 + " matched=[" + ((data.matched || []).join(",") || "-") + "]"
+                 + " decorationBlur=" + data.decorationBlur
+                 + " active=" + !!data.active
+                 + " fallback=" + root.blurUnavailable)
   }
 
   function moveSettings(dx, dy) {
@@ -354,6 +408,7 @@ Item {
       root.openKeys()
     }
     root.applyLayerBlur()
+    hyprBlurTimer.restart()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -1305,16 +1360,23 @@ Item {
     visible: root.opened
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
-    WlrLayershell.namespace: "matt-dance-arcade"
+    WlrLayershell.namespace: root.layerNamespace
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
+    surfaceFormat.opaque: false
+
+    Component.onCompleted: root.logLayerNamespace()
+    onVisibleChanged: if (visible) {
+      root.logLayerNamespace()
+      hyprBlurTimer.restart()
+    }
 
     ArcadeBackdrop {
       anchors.fill: parent
       themeBackground: root.background
       accent: Commons.Color.accent
-      fillOpacity: root.appearance.backgroundOpacity
+      fillOpacity: root.effectiveOpacity
       dynamicTint: root.appearance.dynamicTint
       motionFull: root.motionFull
       motionOff: root.motionOff
@@ -1337,7 +1399,7 @@ Item {
         z: 0
         gradient: Gradient {
           orientation: Gradient.Vertical
-          GradientStop { position: 0.0; color: root.themeFill(Math.min(1, root.appearance.backgroundOpacity + 0.28)) }
+          GradientStop { position: 0.0; color: root.themeFill(Math.min(1, root.effectiveOpacity + (root.blurUnavailable ? 0.22 : 0.28))) }
           GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
         }
       }
@@ -1352,7 +1414,7 @@ Item {
         gradient: Gradient {
           orientation: Gradient.Vertical
           GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
-          GradientStop { position: 1.0; color: root.themeFill(Math.min(1, root.appearance.backgroundOpacity + 0.38)) }
+          GradientStop { position: 1.0; color: root.themeFill(Math.min(1, root.effectiveOpacity + (root.blurUnavailable ? 0.18 : 0.38))) }
         }
       }
 
@@ -1541,6 +1603,15 @@ Item {
 
           Text {
             Layout.fillWidth: true
+            visible: root.blurUnavailable
+            wrapMode: Text.Wrap
+            color: Commons.Color.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            text: "Hyprland is not frosting this layer (namespace " + root.layerNamespace + "). Using a stronger fill so windows behind stay readable. journalctl --user --grep \"layer namespace=\""
+          }
+          Text {
+            Layout.fillWidth: true
             wrapMode: Text.Wrap
             color: root.foreground
             opacity: 0.75
@@ -1635,7 +1706,7 @@ Item {
                 width: homeCard.width
                 height: homeCard.height
                 radius: root.cornerRadius
-                color: Qt.rgba(0, 0, 0, index === root.selectedIndex ? 0.5 : 0.32)
+                color: Qt.rgba(0, 0, 0, index === root.selectedIndex ? (root.blurUnavailable ? 0.7 : 0.5) : (root.blurUnavailable ? 0.5 : 0.32))
                 scale: homeCard.scale
                 z: 1
               }
@@ -1648,7 +1719,7 @@ Item {
                 radius: root.cornerRadius
                 clip: true
                 z: 2
-                color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
+                color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, root.cardScrim)
                 border.width: index === root.selectedIndex ? Math.max(3, Style.space(3)) : 1
                 border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
                 scale: index === root.selectedIndex ? (root.motionOff ? 1.0 : 1.12) : 1.0
@@ -1771,7 +1842,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: root.cornerRadius
-            color: root.themeFill(Math.min(0.55, root.appearance.backgroundOpacity + 0.12))
+            color: root.themeFill(Math.min(root.blurUnavailable ? 0.82 : 0.55, root.effectiveOpacity + (root.blurUnavailable ? 0.22 : 0.12)))
             clip: true
             // Hyprland active window border from the current Omarchy theme
             // (accent color / gradient + window thickness). Fall back to a
@@ -1846,7 +1917,7 @@ Item {
               gradient: Gradient {
                 GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.18) }
                 GradientStop { position: 0.42; color: Qt.rgba(0, 0, 0, 0.28) }
-                GradientStop { position: 1.0; color: root.themeFill(Math.min(0.82, root.appearance.backgroundOpacity + 0.42)) }
+                GradientStop { position: 1.0; color: root.themeFill(Math.min(0.88, root.effectiveOpacity + (root.blurUnavailable ? 0.28 : 0.42))) }
               }
             }
 
@@ -1857,7 +1928,7 @@ Item {
               width: parent.width * 0.62
               gradient: Gradient {
                 orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: root.themeFill(Math.min(0.55, root.appearance.backgroundOpacity + 0.22)) }
+                GradientStop { position: 0.0; color: root.themeFill(Math.min(0.72, root.effectiveOpacity + (root.blurUnavailable ? 0.2 : 0.22))) }
                 GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
               }
             }
@@ -2162,7 +2233,7 @@ Item {
               radius: root.cornerRadius
               clip: true
               z: 1
-              color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, 0.25)
+              color: index === root.selectedIndex ? root.selectedBackground : Qt.rgba(0, 0, 0, root.cardScrim)
               border.width: index === root.selectedIndex ? Math.max(2, Style.space(2)) : 1
               border.color: index === root.selectedIndex ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.12)
 
@@ -2356,7 +2427,7 @@ Item {
           width: Math.min(parent.width - Style.space(80), Style.space(420))
           height: playOnColumn.implicitHeight + Style.spacing.panelPadding * 2
           radius: root.cornerRadius
-          color: root.themeFill(Math.min(0.92, root.appearance.backgroundOpacity + 0.45))
+          color: root.themeFill(Math.min(0.94, root.effectiveOpacity + 0.45))
           border.color: Commons.Color.menu.border
           border.width: 1
 
@@ -2433,7 +2504,7 @@ Item {
           width: Math.min(parent.width - Style.space(80), Style.space(640))
           height: keysColumn.implicitHeight + Style.spacing.panelPadding * 2
           radius: root.cornerRadius
-          color: root.themeFill(Math.min(0.92, root.appearance.backgroundOpacity + 0.45))
+          color: root.themeFill(Math.min(0.94, root.effectiveOpacity + 0.45))
           border.color: Commons.Color.menu.border
           border.width: 1
           MouseArea { anchors.fill: parent }
@@ -2624,7 +2695,7 @@ Item {
     manifest: root.manifest
     pluginRegistry: root.pluginRegistry
     service: root.service
-    panelFill: root.themeFill(Math.min(0.88, root.appearance.backgroundOpacity + 0.38))
+    panelFill: root.themeFill(Math.min(0.92, root.effectiveOpacity + 0.38))
     onDismissed: root.onQuickMenuDismissed()
     onKeysRequested: Qt.callLater(root.showKeysFromMenu)
   }
@@ -2643,6 +2714,30 @@ Item {
     watchChanges: true
     onFileChanged: root.loadAppearanceFromDisk()
     onLoaded: root.loadAppearanceFromDisk()
+  }
+
+  Timer {
+    id: hyprBlurTimer
+    interval: 90
+    repeat: false
+    onTriggered: root.applyLayerBlur()
+  }
+
+  Process {
+    id: hyprBlurProcess
+    stdout: StdioCollector {
+      onStreamFinished: root.applyHyprBlurStdout(text)
+    }
+    stderr: StdioCollector {
+      onStreamFinished: {
+        if (text && text.length)
+          console.warn("matt-dance.arcade: arcade-hypr " + text.trim())
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0)
+        console.warn("matt-dance.arcade: arcade-hypr exited " + exitCode)
+    }
   }
 
   Process {
@@ -2748,7 +2843,13 @@ Item {
     }
   }
 
-  onOpenedChanged: if (root.opened) root.applyLayerBlur()
+  onOpenedChanged: {
+    root.logLayerNamespace()
+    if (root.opened)
+      hyprBlurTimer.restart()
+    else
+      root.applyLayerBlur()
+  }
   onSelectedIndexChanged: root.updateFocused()
   onMetaFileChanged: {
     if (metaView && typeof metaView.reload === "function")
