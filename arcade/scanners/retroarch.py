@@ -16,6 +16,10 @@ def _playlist_dirs() -> list[Path]:
     ]
 
 
+def watch_paths() -> list[Path]:
+    return list(_playlist_dirs())
+
+
 def scan() -> tuple[list[Game], list[ScanError]]:
     games: list[Game] = []
     errors: list[ScanError] = []

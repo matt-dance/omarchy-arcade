@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import ModuleType
 from typing import Callable
 
 from ..config import ArcadeConfig
@@ -10,17 +12,36 @@ from . import bottles, desktop, heroic, itch, legendary, lutris, retroarch, roms
 
 ScanFn = Callable[[], tuple[list[Game], list[ScanError]]]
 
-SCANNERS: dict[str, ScanFn] = {
-    "steam": steam.scan,
-    "heroic": heroic.scan,
-    "legendary": legendary.scan,
-    "lutris": lutris.scan,
-    "bottles": bottles.scan,
-    "itch": itch.scan,
-    "desktop": desktop.scan,
-    "retroarch": retroarch.scan,
-    "roms": roms.scan,
+SCANNER_MODULES: dict[str, ModuleType] = {
+    "steam": steam,
+    "heroic": heroic,
+    "legendary": legendary,
+    "lutris": lutris,
+    "bottles": bottles,
+    "itch": itch,
+    "desktop": desktop,
+    "retroarch": retroarch,
+    "roms": roms,
 }
+
+SCANNERS: dict[str, ScanFn] = {name: module.scan for name, module in SCANNER_MODULES.items()}
+
+
+def scanner_watch_paths(cfg: ArcadeConfig | None = None) -> dict[str, list[Path]]:
+    """Per-scanner filesystem inputs (may not exist yet)."""
+    out: dict[str, list[Path]] = {}
+    for name, module in SCANNER_MODULES.items():
+        if cfg is not None and not cfg.source_enabled(name):
+            continue
+        fn = getattr(module, "watch_paths", None)
+        if fn is None:
+            continue
+        try:
+            paths = list(fn())
+        except Exception:
+            paths = []
+        out[name] = paths
+    return out
 
 
 def run_all(cfg: ArcadeConfig | None = None) -> tuple[list[Game], list[ScanError]]:

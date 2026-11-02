@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -11,16 +13,56 @@ from arcade.config import load_config, library_settings
 from arcade.library_watch import (
     GameRef,
     LibraryMonitor,
+    collect_source_paths,
     collect_watch_paths,
+    collect_watch_targets,
     diff_library,
+    event_is_interesting,
     library_is_stale,
+    source_is_watched,
 )
 from arcade.model import Game, write_library
-from arcade.scanners import steam
-from arcade.watch import Debouncer, PollWatcher
+from arcade.paths import GFN_PLUGIN_IDS, gfn_plugin_paths
+from arcade.scanners import SCANNER_MODULES, scanner_watch_paths, steam
+from arcade.watch import Debouncer, FileWatcher, PollWatcher
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@contextmanager
+def fake_xdg(home: Path):
+    env = {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_DATA_DIRS": str(home / ".local" / "share"),
+    }
+    with mock.patch.dict(os.environ, env, clear=False):
+        yield
+
+
+class FakeWatcher(FileWatcher):
+    backend = "fake"
+
+    def __init__(self) -> None:
+        self.fd = 7
+        self.paths: list[Path] = []
+        self.events: list[tuple[Path | None, str]] = []
+        self.polled = False
+
+    def set_paths(self, paths) -> bool:
+        self.paths = [Path(p) for p in paths]
+        return True
+
+    def read(self) -> list[tuple[Path | None, str]]:
+        events, self.events = self.events, []
+        return events
+
+    def poll(self) -> bool:
+        return self.polled
 
 
 class TestManifestStateFlags(unittest.TestCase):
@@ -231,33 +273,175 @@ class TestLibraryStaleAndMonitor(unittest.TestCase):
             mon.close()
 
 
+def _populate_scanner_sources(home: Path) -> None:
+    share = home / ".local" / "share"
+    config = home / ".config"
+    apps = share / "applications"
+    apps.mkdir(parents=True)
+    (apps / "gfn-108815277.desktop").write_text(
+        "[Desktop Entry]\nName=World of Warcraft\nExec=gfn-play.sh --cms-id 108815277\n"
+        "X-Omarchy-Plugin=matt-dance.gfn-omarchy\nX-GFN-CmsId=108815277\n",
+        encoding="utf-8",
+    )
+    (apps / "wow.desktop").write_text(
+        "[Desktop Entry]\nName=World of Warcraft\nExec=umu-run wow\n",
+        encoding="utf-8",
+    )
+    extensions = config / "omarchy" / "extensions"
+    extensions.mkdir(parents=True)
+    (extensions / "omarchy-menu.jsonc").write_text("{}\n", encoding="utf-8")
+    gfn = share / "matt-dance.gfn-omarchy"
+    gfn.mkdir(parents=True)
+    (gfn / "games.json").write_text("[]\n", encoding="utf-8")
+    steamapps = share / "Steam" / "steamapps"
+    steamapps.mkdir(parents=True)
+    (steamapps / "libraryfolders.vdf").write_text('"libraryfolders"\n{\n}\n', encoding="utf-8")
+    userdata = share / "Steam" / "userdata" / "123" / "config"
+    userdata.mkdir(parents=True)
+    (userdata / "shortcuts.vdf").write_bytes(b"")
+    (userdata / "localconfig.vdf").write_text('"UserLocalConfigStore"{}\n', encoding="utf-8")
+    for rel in (
+        "legendaryConfig/legendary/installed.json",
+        "gog_store/installed.json",
+        "nile_config/nile/installed.json",
+        "sideload_apps/library.json",
+    ):
+        path = config / "heroic" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+    legendary = config / "legendary" / "installed.json"
+    legendary.parent.mkdir(parents=True)
+    legendary.write_text("{}\n", encoding="utf-8")
+    lutris = share / "lutris"
+    lutris.mkdir(parents=True)
+    (lutris / "pga.db").write_bytes(b"")
+    (config / "lutris").mkdir(parents=True, exist_ok=True)
+    bottle = share / "bottles" / "bottles" / "gaming"
+    bottle.mkdir(parents=True)
+    (bottle / "bottle.yml").write_text("Name: gaming\n", encoding="utf-8")
+    itch = config / "itch" / "db"
+    itch.mkdir(parents=True)
+    (itch / "butler.db").write_bytes(b"")
+    playlists = config / "retroarch" / "playlists"
+    playlists.mkdir(parents=True)
+    (playlists / "Nintendo - NES.lpl").write_text("{}\n", encoding="utf-8")
+    roms = home / "Games" / "roms" / "nes"
+    roms.mkdir(parents=True)
+
+
 class TestCollectWatchPaths(unittest.TestCase):
     def test_includes_steamapps_and_applications(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            steamapps = home / ".local" / "share" / "Steam" / "steamapps"
-            steamapps.mkdir(parents=True)
-            (steamapps / "libraryfolders.vdf").write_text('"libraryfolders"\n{\n}\n', encoding="utf-8")
-            apps = home / ".local" / "share" / "applications"
-            apps.mkdir(parents=True)
-            (apps / "Mass Effect Legendary Edition.desktop").write_text(
-                "[Desktop Entry]\nName=Mass Effect Legendary Edition\n"
-                "Exec=steam steam://rungameid/1328670\n",
+            _populate_scanner_sources(home)
+            cfg = load_config(plugin_dir=ROOT, user_path=Path("/nonexistent"))
+            with fake_xdg(home):
+                paths = collect_watch_paths(cfg)
+            strs = {str(p) for p in paths}
+            self.assertIn(str(home / ".local" / "share" / "Steam" / "steamapps"), strs)
+            self.assertIn(str(home / ".local" / "share" / "applications"), strs)
+
+    def test_every_scanner_has_watch_paths(self):
+        missing = [name for name, module in SCANNER_MODULES.items() if not hasattr(module, "watch_paths")]
+        self.assertEqual(missing, [])
+
+    def test_every_scanner_input_is_in_the_watch_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _populate_scanner_sources(home)
+            user = home / "arcade.toml"
+            user.write_text(
+                "[sources]\n" + "".join(f"{name} = true\n" for name in SCANNER_MODULES),
                 encoding="utf-8",
             )
+            cfg = load_config(plugin_dir=ROOT, user_path=user)
+            with fake_xdg(home):
+                by_scanner = scanner_watch_paths(cfg)
+                targets = collect_watch_targets(cfg)
+                sources = collect_source_paths(cfg)
+            self.assertEqual(set(by_scanner), set(SCANNER_MODULES))
+            self.assertTrue(sources)
+            for name, paths in by_scanner.items():
+                self.assertTrue(paths, f"{name} watch_paths() is empty")
+                for path in paths:
+                    self.assertTrue(
+                        source_is_watched(path, targets),
+                        f"{name} input {path} is not in the watch set",
+                    )
+
+    def test_gfn_plugin_and_omarchy_menu_are_watched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            apps = home / ".local" / "share" / "applications"
+            apps.mkdir(parents=True)
+            extensions = home / ".config" / "omarchy" / "extensions"
+            extensions.mkdir(parents=True)
+            (extensions / "omarchy-menu.jsonc").write_text("{}\n", encoding="utf-8")
             cfg = load_config(plugin_dir=ROOT, user_path=Path("/nonexistent"))
-            with mock.patch("arcade.library_watch.steam_roots", return_value=[steamapps.parent]):
-                with mock.patch("arcade.library_watch.application_dirs", return_value=[apps]):
-                    with mock.patch("arcade.library_watch.xdg_data_home", return_value=home / ".local" / "share"):
-                        with mock.patch("arcade.library_watch.heroic_roots", return_value=[]):
-                            with mock.patch("arcade.library_watch.lutris_data_dirs", return_value=[]):
-                                with mock.patch("arcade.library_watch.bottles_data_dirs", return_value=[]):
-                                    with mock.patch("arcade.library_watch.itch_db_paths", return_value=[]):
-                                        with mock.patch("arcade.library_watch.legendary_installed", return_value=[]):
-                                            paths = collect_watch_paths(cfg)
-            strs = {str(p) for p in paths}
-            self.assertIn(str(steamapps), strs)
-            self.assertIn(str(apps), strs)
+            with fake_xdg(home):
+                sources = {p.resolve() for p in collect_source_paths(cfg)}
+                targets = collect_watch_targets(cfg)
+                plugin_paths = gfn_plugin_paths()
+            self.assertIn((apps).resolve(), sources)
+            self.assertIn((extensions / "omarchy-menu.jsonc").resolve(), sources)
+            self.assertIn(extensions.resolve(), sources)
+            for plugin_id in GFN_PLUGIN_IDS:
+                self.assertTrue(any(plugin_id in str(p) for p in plugin_paths))
+            for path in plugin_paths:
+                self.assertTrue(source_is_watched(path, targets), f"GFN source {path} is not watched")
+            self.assertTrue(event_is_interesting(apps, "gfn-108815277.desktop", targets))
+            self.assertTrue(event_is_interesting(apps, "wow.desktop", targets))
+            self.assertTrue(event_is_interesting(apps, ".gfn-write.XXXXXX", targets))
+            self.assertTrue(event_is_interesting(extensions, "omarchy-menu.jsonc", targets))
+
+    def test_missing_gfn_plugin_does_not_watch_xdg_data_unfiltered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            share = home / ".local" / "share"
+            apps = share / "applications"
+            apps.mkdir(parents=True)
+            cfg = load_config(plugin_dir=ROOT, user_path=Path("/nonexistent"))
+            with fake_xdg(home):
+                targets = collect_watch_targets(cfg)
+            share_targets = [t for t in targets if t.directory.resolve() == share.resolve()]
+            self.assertTrue(share_targets)
+            for target in share_targets:
+                self.assertIsNotNone(target.names)
+                self.assertTrue({"matt-dance.gfn-omarchy", "matt-dance.gfn", "icons"} & set(target.names or []))
+            self.assertFalse(event_is_interesting(share, "Trash", targets))
+            self.assertTrue(event_is_interesting(share, "matt-dance.gfn-omarchy", targets))
+            self.assertTrue(event_is_interesting(apps, "gfn-108815277.desktop", targets))
+
+    def test_gfn_desktop_event_requests_watch_rescan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            apps = home / ".local" / "share" / "applications"
+            apps.mkdir(parents=True)
+            lib = home / ".cache" / "matt-dance.arcade" / "library.json"
+            lib.parent.mkdir(parents=True)
+            write_library(lib, [], [])
+            cfg = load_config(plugin_dir=ROOT, user_path=Path("/nonexistent"))
+            reasons: list[str] = []
+            watcher = FakeWatcher()
+            clock = {"mono": 0.0, "wall": lib.stat().st_mtime + 10}
+            with fake_xdg(home):
+                mon = LibraryMonitor(
+                    cfg,
+                    on_rescan=reasons.append,
+                    library_file=lib,
+                    watcher=watcher,
+                    now=lambda: clock["mono"],
+                    wall_now=lambda: clock["wall"],
+                )
+                mon.start()
+                self.assertEqual(reasons, [])
+                watcher.events = [(apps, "gfn-108815277.desktop")]
+                mon.on_readable(watcher.fd)
+                mon.tick(clock["mono"] + 3.9)
+                self.assertEqual(reasons, [])
+                mon.tick(clock["mono"] + 4.0)
+                self.assertEqual(reasons, ["watch"])
+                mon.close()
 
 
 class TestLibrarySettings(unittest.TestCase):
@@ -319,6 +503,40 @@ class TestInotifyWatcher(unittest.TestCase):
                 select.select([watcher.fd], [], [], 1.0)
                 events = watcher.read()
             self.assertTrue(events)
+
+    def test_gfn_atomic_rename_from_hidden_write_dir(self):
+        from arcade.watch import InotifyWatcher, create_watcher
+
+        watcher = create_watcher()
+        self.addCleanup(watcher.close)
+        if not isinstance(watcher, InotifyWatcher):
+            self.skipTest("inotify unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            apps = Path(tmp) / "applications"
+            apps.mkdir()
+            watcher.set_paths([apps])
+            self.assertEqual(watcher.read(), [])
+            write_dir = Path(tempfile.mkdtemp(prefix=".gfn-write.", dir=apps))
+            staged = write_dir / "gfn-108815277.desktop"
+            staged.write_text(
+                "[Desktop Entry]\nName=World of Warcraft\nExec=gfn-play.sh\n",
+                encoding="utf-8",
+            )
+            dest = apps / "gfn-108815277.desktop"
+            os.replace(staged, dest)
+            write_dir.rmdir()
+            events = watcher.read()
+            if not events:
+                import select
+
+                select.select([watcher.fd], [], [], 1.0)
+                events = watcher.read()
+            self.assertTrue(events)
+            names = {name for _directory, name in events}
+            self.assertTrue(
+                names & {"gfn-108815277.desktop", write_dir.name, "*"},
+                names,
+            )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,18 @@ from __future__ import annotations
 import json
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
-from ..paths import legendary_installed
+from ..paths import home, legendary_installed, xdg_config_home
+
+
+def watch_paths() -> list[Path]:
+    paths = [
+        xdg_config_home() / "legendary",
+        xdg_config_home() / "legendary" / "installed.json",
+        home() / ".config" / "legendary",
+        home() / ".config" / "legendary" / "installed.json",
+    ]
+    paths.extend(legendary_installed())
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

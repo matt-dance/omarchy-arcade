@@ -308,6 +308,32 @@ def _scan_shortcuts(root: Path) -> list[Game]:
     return games
 
 
+def watch_paths() -> list[Path]:
+    """steamapps (not common/), libraryfolders.vdf, shortcuts.vdf."""
+    paths: list[Path] = []
+    for root in steam_roots():
+        apps = root / "steamapps"
+        paths.append(apps)
+        paths.append(apps / "libraryfolders.vdf")
+        for library in library_folders(root):
+            paths.append(library / "steamapps")
+        userdata = root / "userdata"
+        paths.append(userdata)
+        if userdata.is_dir():
+            try:
+                users = list(userdata.iterdir())
+            except OSError:
+                users = []
+            for user in users:
+                if not user.is_dir() or not user.name.isdigit():
+                    continue
+                config_dir = user / "config"
+                paths.append(config_dir)
+                paths.append(config_dir / "shortcuts.vdf")
+                paths.append(config_dir / "localconfig.vdf")
+    return paths
+
+
 def scan() -> tuple[list[Game], list[ScanError]]:
     roots = steam_roots()
     if not roots:

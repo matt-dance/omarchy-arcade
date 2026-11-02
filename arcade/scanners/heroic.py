@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
-from ..paths import heroic_roots
+from ..paths import heroic_roots, home, xdg_config_home
 
 
 def _load_json(path: Path) -> Any:
@@ -106,6 +106,27 @@ def _games_from_installed(path: Path, store: str, runner: str) -> list[Game]:
             )
         )
     return games
+
+
+_INSTALLED_REL = (
+    "legendaryConfig/legendary/installed.json",
+    "gog_store/installed.json",
+    "nile_config/nile/installed.json",
+    "sideload_apps/library.json",
+)
+
+
+def watch_paths() -> list[Path]:
+    paths: list[Path] = []
+    candidates = [
+        xdg_config_home() / "heroic",
+        home() / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "heroic",
+    ]
+    for root in list(heroic_roots()) + [p for p in candidates if p not in heroic_roots()]:
+        paths.append(root)
+        for rel in _INSTALLED_REL:
+            paths.append(root / rel)
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

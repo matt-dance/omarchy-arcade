@@ -14,18 +14,15 @@ from typing import Any, Callable, Iterable
 
 from .config import ArcadeConfig, library_settings
 from .paths import (
-    application_dirs,
-    bottles_data_dirs,
-    heroic_roots,
     home,
-    itch_db_paths,
-    legendary_installed,
     library_path,
-    lutris_data_dirs,
-    steam_roots,
+    xdg_cache_home,
     xdg_config_home,
+    xdg_data_dirs,
     xdg_data_home,
+    xdg_state_home,
 )
+from .scanners import scanner_watch_paths
 from .watch import Debouncer, FileWatcher, create_watcher
 
 
@@ -109,132 +106,177 @@ def diff_library(old: Iterable[Any] | None, new: Iterable[Any] | None) -> Librar
     return LibraryDiff(added=uniq_add, removed=uniq_rm)
 
 
-def _add_path(out: list[Path], path: Path | None) -> None:
-    if path is None:
-        return
-    out.append(path)
+@dataclass(frozen=True)
+class WatchTarget:
+    """A directory to watch. ``names`` limits events when the dir is a wide ancestor."""
+
+    directory: Path
+    names: frozenset[str] | None = None
+
+
+def collect_source_paths(cfg: ArcadeConfig | None = None) -> list[Path]:
+    """Every path scanners read, including ones that do not exist yet."""
+    paths: list[Path] = []
+    for _name, items in scanner_watch_paths(cfg).items():
+        paths.extend(items)
+    return _unique_paths(paths)
 
 
 def collect_watch_paths(cfg: ArcadeConfig | None = None) -> list[Path]:
-    """Existing files/dirs the scanners read. Shallow — never ``steamapps/common``."""
-    paths: list[Path] = []
-    enabled = cfg.source_enabled if cfg is not None else (lambda _name: True)
-
-    if enabled("steam"):
-        from .scanners.steam import library_folders
-
-        for root in steam_roots():
-            apps = root / "steamapps"
-            _add_path(paths, apps)
-            _add_path(paths, apps / "libraryfolders.vdf")
-            for library in library_folders(root):
-                _add_path(paths, library / "steamapps")
-            userdata = root / "userdata"
-            _add_path(paths, userdata)
-            if userdata.is_dir():
-                try:
-                    users = list(userdata.iterdir())
-                except OSError:
-                    users = []
-                for user in users:
-                    if not user.is_dir() or not user.name.isdigit():
-                        continue
-                    config_dir = user / "config"
-                    _add_path(paths, config_dir)
-                    _add_path(paths, config_dir / "shortcuts.vdf")
-
-    if enabled("heroic"):
-        for root in heroic_roots():
-            _add_path(paths, root)
-            _add_path(paths, root / "legendaryConfig" / "legendary")
-            _add_path(paths, root / "legendaryConfig" / "legendary" / "installed.json")
-            _add_path(paths, root / "gog_store")
-            _add_path(paths, root / "gog_store" / "installed.json")
-            _add_path(paths, root / "nile_config" / "nile")
-            _add_path(paths, root / "nile_config" / "nile" / "installed.json")
-            _add_path(paths, root / "sideload_apps")
-            _add_path(paths, root / "sideload_apps" / "library.json")
-
-    if enabled("legendary"):
-        for installed in legendary_installed():
-            _add_path(paths, installed)
-            _add_path(paths, installed.parent)
-        _add_path(paths, xdg_config_home() / "legendary")
-        _add_path(paths, home() / ".config" / "legendary")
-
-    if enabled("lutris"):
-        for data_dir in lutris_data_dirs():
-            _add_path(paths, data_dir)
-            _add_path(paths, data_dir / "pga.db")
-        _add_path(paths, xdg_config_home() / "lutris")
-        _add_path(paths, home() / ".var" / "app" / "net.lutris.Lutris" / "config" / "lutris")
-        _add_path(paths, home() / ".var" / "app" / "net.lutris.Lutris" / "data" / "lutris")
-
-    if enabled("bottles"):
-        for data_dir in bottles_data_dirs():
-            _add_path(paths, data_dir)
-            bottles_root = data_dir / "bottles"
-            _add_path(paths, bottles_root)
-            if bottles_root.is_dir():
-                try:
-                    children = list(bottles_root.iterdir())
-                except OSError:
-                    children = []
-                for bottle in children:
-                    if bottle.is_dir():
-                        _add_path(paths, bottle)
-                        _add_path(paths, bottle / "bottle.yml")
-
-    if enabled("itch"):
-        for db in itch_db_paths():
-            _add_path(paths, db)
-            _add_path(paths, db.parent)
-        _add_path(paths, xdg_config_home() / "itch" / "db")
-        _add_path(paths, home() / ".var" / "app" / "io.itch.itch" / "config" / "itch" / "db")
-
-    if enabled("desktop"):
-        _add_path(paths, xdg_data_home() / "applications")
-        for directory in application_dirs():
-            _add_path(paths, directory)
-        _add_path(paths, Path("/var/lib/flatpak/exports/share/applications"))
-        _add_path(paths, xdg_data_home() / "flatpak" / "exports" / "share" / "applications")
-
-    if enabled("retroarch"):
-        _add_path(paths, xdg_config_home() / "retroarch" / "playlists")
-        _add_path(
-            paths,
-            home() / ".var" / "app" / "org.libretro.RetroArch" / "config" / "retroarch" / "playlists",
-        )
-
-    if enabled("roms"):
-        roms = home() / "Games" / "roms"
-        _add_path(paths, roms)
-        if roms.is_dir():
-            try:
-                children = list(roms.iterdir())
-            except OSError:
-                children = []
-            for child in children:
-                if child.is_dir():
-                    _add_path(paths, child)
-
-    return _unique_existing(paths)
+    """Directories (and existing files) handed to the watcher."""
+    return [t.directory for t in collect_watch_targets(cfg)]
 
 
-def _unique_existing(paths: list[Path]) -> list[Path]:
+def collect_watch_targets(cfg: ArcadeConfig | None = None) -> list[WatchTarget]:
+    """Watch parents of files so atomic replace / editor temps are visible.
+
+    Missing sources watch one existing ancestor. Wide ancestors
+    (``$HOME``, XDG roots) are name-filtered so ``~/.local/share`` is not
+    a firehose.
+    """
+    stop = _resolved(home())
+    wide = wide_watch_roots(stop)
+    merged: dict[Path, frozenset[str] | None] = {}
+    for source in collect_source_paths(cfg):
+        for target in targets_for_source(source, stop_at=stop, wide=wide):
+            key = _resolved(target.directory) or target.directory
+            if key not in merged or target.names is None:
+                merged[key] = target.names
+            elif merged[key] is not None and target.names is not None:
+                merged[key] = merged[key] | target.names
+    return [WatchTarget(directory=path, names=names) for path, names in merged.items()]
+
+
+def wide_watch_roots(stop_at: Path | None = None) -> set[Path]:
+    """Ancestors that must not be watched unfiltered."""
+    stop = _resolved(stop_at if stop_at is not None else home())
+    roots = {stop}
+    extras = [
+        stop / ".local",
+        stop / ".local" / "share",
+        stop / ".local" / "state",
+        stop / ".config",
+        stop / ".cache",
+        stop / ".var",
+        stop / ".var" / "app",
+        stop / ".steam",
+        xdg_data_home(),
+        xdg_config_home(),
+        xdg_cache_home(),
+        xdg_state_home(),
+    ]
+    extras.extend(xdg_data_dirs())
+    for extra in extras:
+        roots.add(_resolved(extra))
+    return roots
+
+
+def targets_for_source(
+    source: Path,
+    stop_at: Path | None = None,
+    wide: set[Path] | None = None,
+) -> list[WatchTarget]:
+    stop = _resolved(stop_at) if stop_at is not None else None
+    wide_roots = wide if wide is not None else wide_watch_roots(stop)
+    try:
+        if source.is_dir():
+            return [WatchTarget(source, None)]
+        if source.is_file():
+            return [WatchTarget(source.parent, None)]
+    except OSError:
+        pass
+    child = source
+    current = source.parent
+    while True:
+        try:
+            exists = current.is_dir()
+        except OSError:
+            exists = False
+        if exists:
+            key = _resolved(current)
+            if current == source.parent and key not in wide_roots:
+                return [WatchTarget(current, None)]
+            return [WatchTarget(current, frozenset({child.name}))]
+        if current == current.parent:
+            return []
+        if stop is not None and _resolved(current) == stop:
+            return []
+        child = current
+        current = current.parent
+
+
+def event_is_interesting(directory: Path | None, name: str, targets: list[WatchTarget]) -> bool:
+    """True when an inotify/poll event should start the rescan debounce.
+
+    Fully-watched dirs (``names is None``) keep ``gfn-*.desktop``,
+    ``.gfn-write.*`` temp dirs, and events from ephemeral child watches.
+    Name-filtered wide ancestors only accept the listed child names.
+    """
+    if name == "*":
+        return True
+    if directory is None:
+        return True
+    dir_key = _resolved(directory)
+    for target in targets:
+        key = _resolved(target.directory)
+        if dir_key == key:
+            if target.names is None or name in target.names:
+                return True
+            continue
+        if target.names is None:
+            if _is_relative_to(dir_key, key):
+                return True
+            continue
+        if _is_relative_to(dir_key, key):
+            rel = _relative_to(dir_key, key)
+            if rel is not None and rel.parts and rel.parts[0] in target.names:
+                return True
+    return False
+
+
+def source_is_watched(source: Path, targets: list[WatchTarget]) -> bool:
+    """True when a scanner input is covered by ``targets``."""
+    src = _resolved(source)
+    for target in targets:
+        key = _resolved(target.directory)
+        if src == key:
+            return True
+        if target.names is None:
+            if _is_relative_to(src, key):
+                return True
+            continue
+        if src.parent == key and src.name in target.names:
+            return True
+        if _is_relative_to(src, key):
+            rel = _relative_to(src, key)
+            if rel is not None and rel.parts and rel.parts[0] in target.names:
+                return True
+    return False
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _relative_to(path: Path, parent: Path) -> Path | None:
+    try:
+        return path.relative_to(parent)
+    except ValueError:
+        return None
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    return _relative_to(path, parent) is not None
+
+
+def _unique_paths(paths: list[Path]) -> list[Path]:
     seen: set[Path] = set()
     out: list[Path] = []
     for path in paths:
-        try:
-            exists = path.exists()
-        except OSError:
-            continue
-        if not exists:
-            continue
-        try:
-            key = path.resolve()
-        except OSError:
-            key = path
+        key = _resolved(path)
         if key in seen:
             continue
         seen.add(key)
@@ -282,6 +324,7 @@ class LibraryMonitor:
         self._owns_watcher = watcher is None
         self._last_resolve = 0.0
         self._watch_paths: list[Path] = []
+        self._watch_targets: list[WatchTarget] = []
         if self._settings["auto_watch"] and self._watcher is None:
             self._watcher = create_watcher()
 
@@ -326,6 +369,7 @@ class LibraryMonitor:
                 self._watcher.close()
                 self._watcher = None
             self._watch_paths = []
+            self._watch_targets = []
 
     def on_overlay_open(self) -> None:
         if library_is_stale(self._library_file, self._settings["stale_minutes"], self._wall()):
@@ -335,7 +379,21 @@ class LibraryMonitor:
         if self._watcher is None or fd != self._watcher.fd:
             return
         events = self._watcher.read()
-        if events:
+        interesting = False
+        retarget = False
+        for directory, name in events:
+            if event_is_interesting(directory, name, self._watch_targets):
+                interesting = True
+            if directory is not None and name:
+                child = directory / name
+                try:
+                    if child.is_dir():
+                        retarget = True
+                except OSError:
+                    pass
+        if retarget:
+            self._apply_targets()
+        if interesting:
             self.debouncer.poke(self._now())
 
     def tick(self, now: float | None = None) -> None:
@@ -359,12 +417,15 @@ class LibraryMonitor:
             self._watcher.close()
         self._watcher = None
         self._watch_paths = []
+        self._watch_targets = []
 
     def _apply_targets(self) -> bool:
         if self._watcher is None:
             return False
-        paths = collect_watch_paths(self.cfg)
+        targets = collect_watch_targets(self.cfg)
+        paths = [item.directory for item in targets]
         changed = [str(p) for p in paths] != [str(p) for p in self._watch_paths]
+        self._watch_targets = targets
         self._watch_paths = paths
         try:
             self._watcher.set_paths(paths)
