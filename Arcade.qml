@@ -623,11 +623,13 @@ Item {
   }
 
   function ensureLibrary() {
-    if (root.libraryGames().length)
+    var stale = root.service && typeof root.service.libraryIsStale === "function" && root.service.libraryIsStale()
+    if (root.libraryGames().length && !stale)
       return
     if (root.service && typeof root.service.rescan === "function")
       root.service.rescan()
-    root.startLocalScan()
+    if (!root.libraryGames().length || !root.service)
+      root.startLocalScan()
   }
 
   function launchResolved(game) {
@@ -712,8 +714,9 @@ Item {
   }
 
   function loadMetaFromDisk() {
+    var gameId = root.focusedGame ? String(root.focusedGame.id) : ""
     if (!root.metaFile) {
-      if (!root.focusedGame)
+      if (!gameId)
         root.selectedMeta = {}
       return
     }
@@ -724,12 +727,22 @@ Item {
       text = ""
     }
     var parsed = Model.parseMetaText(text)
-    if (parsed && parsed.id) {
+    // FileView.text() can still be the previous card after metaFile
+    // changes; never bind that JSON to the newly focused id.
+    if (Model.metaMatchesGame(parsed, gameId)) {
       root.selectedMeta = parsed
       root.ingestMeta(parsed)
       console.warn("matt-dance.arcade: meta loaded id=" + parsed.id
                    + " file=" + root.metaFile)
+      return
     }
+    if (parsed && parsed.id)
+      root.ingestMeta(parsed)
+    var cached = Model.lookupMeta(root.focusedGame, root.metaById)
+    if (cached)
+      root.selectedMeta = cached
+    else if (!Model.metaMatchesGame(root.selectedMeta, gameId))
+      root.selectedMeta = {}
   }
 
   function ingestMeta(meta) {
@@ -763,7 +776,7 @@ Item {
       return
     }
     if (data && data.meta && data.meta.id) {
-      if (!root.focusedGame || data.meta.id === root.focusedGame.id)
+      if (!root.focusedGame || Model.metaMatchesGame(data.meta, root.focusedGame.id))
         root.selectedMeta = data.meta
       root.ingestMeta(data.meta)
     }
@@ -796,7 +809,10 @@ Item {
     cmd.push(gameId)
     metaProcess.command = cmd
     console.warn("matt-dance.arcade: overlay starting arcade-meta " + gameId
-                 + (force ? " --force" : "") + " file=" + root.metaFile)
+                 + (force ? " --force" : "") + " file=" + Model.metaFilePath(
+                   Quickshell.env("HOME") || "",
+                   Quickshell.env("XDG_CACHE_HOME") || "",
+                   gameId))
     metaProcess.running = true
   }
 

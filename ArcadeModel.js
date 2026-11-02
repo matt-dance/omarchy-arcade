@@ -29,7 +29,8 @@ function parseLibraryText(text) {
       games: games,
       errors: data.errors || [],
       ok: true,
-      empty: games.length === 0
+      empty: games.length === 0,
+      scannedAt: data.scannedAt || data.scanned_at || ""
     }
   } catch (e) {
     return { games: [], errors: [], ok: false, empty: true, error: String(e) }
@@ -598,6 +599,12 @@ function parseMetaText(text) {
   } catch (e) {
     return {}
   }
+}
+
+function metaMatchesGame(meta, gameId) {
+  if (!meta || !meta.id || !gameId)
+    return false
+  return String(meta.id) === String(gameId)
 }
 
 function metaIsFresh(meta) {

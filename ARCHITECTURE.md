@@ -10,12 +10,12 @@ omarchy-shell (Quickshell, Qt 6, one long-lived process)
     ├── Service.qml       kind: service, keepLoaded
     │   ├── IpcHandler target "matt-dance.arcade": toggle | open | close | rescan | status | action <name>
     │   ├── Process: bin/arcaded --exit-with-stdin   (long-lived, JSON lines both ways)
-    │   ├── Process: bin/arcade-scan --json          (one-shot, on open/rescan/file change)
+    │   ├── Process: bin/arcade-scan --json          (one-shot, on open/rescan/watch/stale)
     │   ├── Process: bin/arcade-art <ids…>           (one-shot batches, low priority)
     │   ├── Process: bin/arcade-meta <ids…>          (one-shot, metadata cache, never on the UI thread)
     │   ├── Hyprland event stream (Quickshell.Hyprland) for window open/close/focus
     │   ├── IdleInhibitor while Arcade is open or a tracked game runs
-    │   └── FileView watches: arcade.toml, library sources, theme changes are automatic
+    │   └── FileView watches: arcade.toml, library.json; source dirs are watched in arcaded
     ├── Arcade.qml        kind: overlay   full-screen library on the overlay layer
     │                     also reads library.json + runs arcade-scan if the service is absent
     └── QuickMenu.qml     in-game side sheet (child of Arcade.qml, not a plugin kind)
@@ -25,7 +25,8 @@ bin/arcaded (Python 3 stdlib)
 ├── combos/    chord recogniser: tap, hold, repeat, chord window, latch-until-release
 ├── session/   launch through systemd-run scope, pidfd exit wait, Steam reaper watch
 ├── uinput/    optional virtual keyboard, only for bindings with `keys =`
-└── config/    tomllib loader, defaults + user merge, validation report
+├── config/    tomllib loader, defaults + user merge, validation report
+└── watch/     inotify (watchdog / pyinotify / ctypes) or ~30 s poll on every scanner input (parent dirs; GFN plugin + omarchy-menu.jsonc included)
 ```
 
 ### Why this split
@@ -51,6 +52,8 @@ Daemon to service:
 {"t":"session","state":"running","game":"steam:1245620","pid":5678}
 {"t":"session","state":"exited","game":"steam:1245620","code":0,"seconds":3121}
 {"t":"config","ok":false,"errors":["bindings.\"GUIDE + Q\": unknown button Q"]}
+{"t":"watch","backend":"inotify","paths":8,"auto":true}
+{"t":"rescan","reason":"watch"}           // startup | open | watch — service runs arcade-scan
 ```
 
 Service to daemon:
@@ -116,7 +119,7 @@ Each scanner is a pure function, `scan(home, env) -> list[Game]`, that never rai
 | Lutris | `~/.local/share/lutris/pga.db` (SQLite, `games` where `installed = 1`), Flatpak `~/.var/app/net.lutris.Lutris/data/lutris`. Covers in `coverart/<slug>.jpg`, banners in `banners/` | `lutris lutris:rungameid/<id>` | Hand-off via `lutris-wrapper` process, pidfd |
 | Bottles | `~/.local/share/bottles/bottles/*/bottle.yml` → `External_Programs`, plus the Flatpak data dir | `bottles-cli run -b <bottle> -p <program>`, or `flatpak run --command=bottles-cli com.usebottles.bottles …` | Scope |
 | itch | `~/.config/itch/db/butler.db` (SQLite: `caves` joined to `games` for title and `cover_url`) | `xdg-open itch://caves/<caveId>/launch` | Hand-off |
-| Desktop entries | `$XDG_DATA_DIRS/applications`, `~/.local/share/applications`, and the Flatpak exports (`/var/lib/flatpak/exports/share/applications`, `~/.local/share/flatpak/exports/share/applications`). Entries with `Categories` containing `Game`, minus `NoDisplay`/`Hidden`, minus the launchers themselves (Steam, Heroic, Lutris, Bottles, itch). Recognized special cases: **GFN** (`X-Omarchy-Plugin=matt-dance.gfn-omarchy`, `X-GFN-*`), **RetroArch game launchers** (`Categories=Game;Emulator;`), **Battle.net** (`omarchy-launch-battlenet`), **Minecraft**, **Xbox Cloud** and other cloud web apps (`omarchy-launch-webapp` with a known URL, regardless of categories) | `gio launch <file>`-equivalent: parse `Exec`, strip field codes, run in a scope. GFN entries keep their own `gfn-play.sh` | Scope, or the window class for web apps and GFN |
+| Desktop entries | `$XDG_DATA_DIRS/applications`, `~/.local/share/applications`, and the Flatpak exports (`/var/lib/flatpak/exports/share/applications`, `~/.local/share/flatpak/exports/share/applications`). Entries with `Categories` containing `Game`, minus `NoDisplay`/`Hidden`, minus the launchers themselves (Steam, Heroic, Lutris, Bottles, itch). Recognized special cases: **GFN** (`stem gfn-*`, `X-Omarchy-Plugin=matt-dance.gfn-omarchy`, `X-GFN-*`, `gfn-play.sh` — no `Game` category required). The watcher also covers GeForce NOW Menu state (`$XDG_DATA_HOME/matt-dance.gfn-omarchy/games.json`) and `~/.config/omarchy/extensions/omarchy-menu.jsonc`. **RetroArch game launchers** (`Categories=Game;Emulator;`), **Battle.net** (`omarchy-launch-battlenet`), **Minecraft**, **Xbox Cloud** and other cloud web apps (`omarchy-launch-webapp` with a known URL, regardless of categories) | `gio launch <file>`-equivalent: parse `Exec`, strip field codes, run in a scope. GFN entries keep their own `gfn-play.sh` | Scope, or the window class for web apps and GFN |
 | RetroArch playlists (M4) | `~/.config/retroarch/playlists/*.lpl` (JSON: `path`, `label`, `core_path`, `db_name`) | `retroarch -L <core> <rom>` | Scope, `com.libretro.RetroArch` |
 | ROM folders (M4) | `~/Games/roms/<system>/*` with an extension-to-system-to-core table (Omarchy layout) | Same as above | Scope |
 | Moonlight (M4) | `~/.config/Moonlight Game Streaming Project/Moonlight.conf` hosts and apps | `moonlight stream <host> <app>` | Scope |

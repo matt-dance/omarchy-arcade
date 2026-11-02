@@ -15,7 +15,7 @@ from ..model import (
     normalize_title,
     strip_source_title_prefix,
 )
-from ..paths import application_dirs
+from ..paths import application_dir_candidates, application_dirs, gfn_plugin_paths
 
 # Launchers themselves — not games.
 _SKIP_IDS = {
@@ -247,6 +247,14 @@ def _argv_fallback(exec_line: str) -> list[str]:
         return [p for p in shlex.split(cleaned) if p]
     except ValueError:
         return cleaned.split()
+
+
+def watch_paths() -> list[Path]:
+    """Application dirs (including gfn-*.desktop) plus GFN plugin / Omarchy menu files."""
+    paths = list(application_dir_candidates())
+    paths.extend(application_dirs())
+    paths.extend(gfn_plugin_paths())
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

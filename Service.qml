@@ -53,6 +53,9 @@ Item {
   property bool quickMenuWanted: false
   property bool keysSheetWanted: false
   property bool uiOpen: false
+  property double lastScanAt: 0
+  property int staleMinutes: 15
+  property string pendingScanReason: ""
 
   // Custom signals must not match a property's automatic *Changed signal.
   // `padsChanged` used to be declared here and collided with `property var pads`,
@@ -109,13 +112,43 @@ Item {
     return args
   }
 
+  function libraryIsStale() {
+    if (!root.lastScanAt)
+      return true
+    return (Date.now() / 1000 - root.lastScanAt) >= (root.staleMinutes * 60)
+  }
+
+  function refreshIfStale() {
+    if (root.libraryIsStale())
+      root.rescan()
+  }
+
+  function prefetchArtAndMeta() {
+    if (!artProcess.running) {
+      artProcess.command = root.pythonCmd(root.artBin, ["--plugin-dir", root.pluginDir, "--limit", "10"])
+      artProcess.running = true
+    }
+    if (!metaProcess.running) {
+      metaProcess.command = root.pythonCmd(root.metaBin, ["--plugin-dir", root.pluginDir, "--limit", "8"])
+      metaProcess.running = true
+    }
+  }
+
   function rescan(payloadJson) {
     root.lastAction = "scan:pending"
     root.lastError = ""
+    root.pendingScanReason = ""
+    if (payloadJson && String(payloadJson).length) {
+      try {
+        var parsed = JSON.parse(payloadJson)
+        if (parsed && parsed.reason)
+          root.pendingScanReason = String(parsed.reason)
+      } catch (e) {}
+    }
     if (scanProcess.running)
       scanProcess.running = false
     scanProcess.command = root.pythonCmd(root.scanBin, ["--plugin-dir", root.pluginDir])
-    root.log("starting arcade-scan " + root.scanBin)
+    root.log("starting arcade-scan " + root.scanBin + (root.pendingScanReason ? (" reason=" + root.pendingScanReason) : ""))
     scanProcess.running = true
     return "ok"
   }
@@ -133,6 +166,11 @@ Item {
         return
       }
       root.lastAction = parsed.empty ? "scan:empty" : "scan:done"
+      if (parsed.scannedAt) {
+        var scanned = Date.parse(parsed.scannedAt)
+        if (!isNaN(scanned))
+          root.lastScanAt = scanned / 1000
+      }
       root.log("loaded library.json games=" + root.games.length)
       root.libraryChanged()
     } catch (e) {
@@ -328,6 +366,13 @@ Item {
       root.dispatchAction(msg.name || "")
     } else if (t === "session") {
       root.onSessionEvent(msg)
+    } else if (t === "rescan") {
+      root.log("daemon requested rescan reason=" + (msg.reason || ""))
+      root.rescan(JSON.stringify({ reason: msg.reason || "" }))
+    } else if (t === "watch") {
+      root.log("library watch backend=" + (msg.backend || "?")
+               + " paths=" + (msg.paths || 0)
+               + " auto=" + (msg.auto ? "on" : "off"))
     } else if (t === "error") {
       root.lastError = msg.error || "daemon error"
       root.notifySend("Arcade", root.lastError)
@@ -487,17 +532,25 @@ Item {
     id: scanProcess
     stdout: StdioCollector {
       onStreamFinished: {
+        root.lastScanAt = Date.now() / 1000
         if (libraryView && typeof libraryView.reload === "function")
           libraryView.reload()
         root.loadLibraryFromDisk()
-        if (!artProcess.running) {
-          artProcess.command = root.pythonCmd(root.artBin, ["--plugin-dir", root.pluginDir, "--limit", "10"])
-          artProcess.running = true
-        }
-        if (!metaProcess.running) {
-          metaProcess.command = root.pythonCmd(root.metaBin, ["--plugin-dir", root.pluginDir, "--limit", "8"])
-          metaProcess.running = true
-        }
+        try {
+          var report = JSON.parse(text)
+          if (report && report.added && report.added.length) {
+            var titles = []
+            for (var i = 0; i < report.added.length; i++)
+              titles.push(report.added[i].title || report.added[i].id)
+            var line = titles.length === 1 ? ("Added: " + titles[0]) : ("Added: " + titles.join(", "))
+            root.log(line)
+            if (root.pendingScanReason === "watch")
+              root.notifySend("Arcade", titles.length === 1 ? line : ("Added: " + titles.length + " games"))
+          }
+          if (report && report.removed && report.removed.length)
+            root.log("Removed: " + report.removed.length)
+        } catch (e) {}
+        root.prefetchArtAndMeta()
       }
     }
     stderr: StdioCollector {

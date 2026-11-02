@@ -13,7 +13,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from arcade.config import load_config
-from arcade.model import write_library
+from arcade.library_watch import diff_library
+from arcade.model import read_library, write_library
 from arcade.paths import library_path
 from arcade.scanners import run_all
 
@@ -28,13 +29,21 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(plugin_dir=args.plugin_dir)
     games, errors = run_all(cfg)
     out = args.out or library_path()
+    previous: list = []
+    try:
+        previous = list(read_library(out).get("games") or [])
+    except Exception:
+        previous = []
     write_library(out, games, errors)
+    diff = diff_library(previous, games)
 
     payload = {
         "version": 1,
         "count": len(games),
         "errors": [e.to_dict() for e in errors],
         "path": str(out),
+        "added": [item.to_dict() for item in diff.added],
+        "removed": [item.to_dict() for item in diff.removed],
     }
     if args.json:
         print(

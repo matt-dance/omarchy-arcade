@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
-from ..paths import lutris_data_dirs
+from ..paths import home, lutris_data_dirs, xdg_config_home, xdg_data_home
 
 
 def _cover(data_dir: Path, slug: str) -> str | None:
@@ -20,6 +20,21 @@ def _cover(data_dir: Path, slug: str) -> str | None:
         if p.is_file():
             return p.as_uri()
     return None
+
+
+def watch_paths() -> list[Path]:
+    paths: list[Path] = [
+        xdg_data_home() / "lutris",
+        xdg_data_home() / "lutris" / "pga.db",
+        xdg_config_home() / "lutris",
+        home() / ".var" / "app" / "net.lutris.Lutris" / "data" / "lutris",
+        home() / ".var" / "app" / "net.lutris.Lutris" / "data" / "lutris" / "pga.db",
+        home() / ".var" / "app" / "net.lutris.Lutris" / "config" / "lutris",
+    ]
+    for data_dir in lutris_data_dirs():
+        paths.append(data_dir)
+        paths.append(data_dir / "pga.db")
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

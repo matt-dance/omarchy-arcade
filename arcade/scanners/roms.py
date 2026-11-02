@@ -62,6 +62,20 @@ def _rom_root() -> Path:
     return home() / "Games" / "roms"
 
 
+def watch_paths() -> list[Path]:
+    root = _rom_root()
+    paths = [root]
+    if root.is_dir():
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            children = []
+        for child in children:
+            if child.is_dir():
+                paths.append(child)
+    return paths
+
+
 def _find_core(name: str) -> str | None:
     candidates = [
         Path("/usr/lib/libretro") / name,

@@ -44,6 +44,17 @@ retroarch = true
 roms = false
 moonlight = false
 
+# Watch Steam / Heroic / Lutris / … and rescan when games appear or vanish.
+# Startup and overlay-open still refresh a stale library when auto_watch is false.
+[library]
+auto_watch = true
+# Wait after the last filesystem event (Steam rewrites manifests during downloads).
+debounce_s = 4
+# How often to re-list watched dirs, and the poll interval when inotify is unavailable.
+poll_interval_s = 30
+# Rescan when Arcade opens if library.json is older than this many minutes.
+stale_minutes = 15
+
 [art]
 steamgriddb_key_file = "~/.config/omarchy/arcade/steamgriddb.key"
 

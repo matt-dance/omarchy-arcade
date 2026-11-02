@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -56,6 +58,7 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("FileView", qml)
         self.assertIn("localGames", qml)
         self.assertIn("startLocalScan", qml)
+        self.assertIn("libraryIsStale", qml)
         self.assertIn("loadLibraryFromDisk", qml)
         self.assertIn("library.json", qml)
         self.assertIn("/usr/bin/python3", qml)
@@ -95,6 +98,8 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("PreserveAspectCrop", qml)
         self.assertIn("function metaFilePath", js)
         self.assertIn("function parseMetaText", js)
+        self.assertIn("function metaMatchesGame", js)
+        self.assertIn("Model.metaMatchesGame", qml)
         self.assertIn("function metaIsFresh", js)
         self.assertIn("function factsLine", js)
         self.assertIn("function protonLabel", js)
@@ -146,12 +151,21 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("arcaded exited", qml)
         self.assertIn("/usr/bin/python3", qml)
         self.assertIn("will retry", qml)
+        self.assertIn('t === "rescan"', qml)
+        self.assertIn("libraryIsStale", qml)
+        self.assertIn("prefetchArtAndMeta", qml)
+        self.assertIn("Added:", qml)
+        self.assertIn("library watch backend=", qml)
 
     def test_readme_documents_shell_restart(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("omarchy-restart-shell", readme)
         self.assertIn("journalctl --user", readme)
         self.assertIn("Recovering a dead service", readme)
+        self.assertIn("auto_watch", readme)
+        self.assertIn("poll_interval_s", readme)
+        self.assertIn("stale_minutes", readme)
+        self.assertIn("StateFlags", readme)
 
     def test_readme_documents_metadata_keys(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -182,6 +196,36 @@ class TestArcadedBanner(unittest.TestCase):
             check=False,
         )
         self.assertIn("matt-dance.arcade: arcaded starting", proc.stderr)
+
+    def test_watch_and_stale_startup_rescan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.copy()
+            env["HOME"] = tmp
+            env["XDG_CACHE_HOME"] = str(Path(tmp) / "cache")
+            env["XDG_CONFIG_HOME"] = str(Path(tmp) / "config")
+            env["XDG_DATA_HOME"] = str(Path(tmp) / "data")
+            env["XDG_STATE_HOME"] = str(Path(tmp) / "state")
+            env["PYTHONPATH"] = str(ROOT)
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "bin" / "arcaded"), "--plugin-dir", str(ROOT), "--exit-with-stdin"],
+                input='{"t":"mode","ui":true}\n{"t":"ping"}\n',
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+                env=env,
+            )
+        types = []
+        for line in proc.stdout.splitlines():
+            try:
+                types.append(json.loads(line).get("t"))
+            except json.JSONDecodeError:
+                continue
+        self.assertIn("hello", types)
+        self.assertIn("watch", types)
+        self.assertIn("rescan", types)
+        self.assertIn("pong", types)
+        self.assertIn("startup", [json.loads(l).get("reason") for l in proc.stdout.splitlines() if '"rescan"' in l])
 
 
 if __name__ == "__main__":

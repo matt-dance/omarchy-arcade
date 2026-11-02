@@ -144,6 +144,20 @@ class TestModelState(unittest.TestCase):
             "/home/u/.config/omarchy/arcade/arcade.toml",
         )
 
+    def test_meta_file_matches_game_id(self):
+        self.assertEqual(
+            run_js('metaFilePath("/home/u", "/cache", "steam:1328670")'),
+            "/cache/matt-dance.arcade/meta/steam_1328670.json",
+        )
+        self.assertEqual(
+            run_js('metaFilePath("/home/u", "/cache", "gfn:gfn-107820252")'),
+            "/cache/matt-dance.arcade/meta/gfn_gfn-107820252.json",
+        )
+        self.assertTrue(run_js('metaMatchesGame({id: "steam:1328670"}, "steam:1328670")'))
+        self.assertFalse(run_js('metaMatchesGame({id: "steam:1328670"}, "steam:1203620")'))
+        self.assertFalse(run_js('metaMatchesGame({id: "gfn:gfn-107820252"}, "desktop:battlenet")'))
+        self.assertFalse(run_js('metaMatchesGame({}, "steam:1")'))
+
 
 if __name__ == "__main__":
     unittest.main()

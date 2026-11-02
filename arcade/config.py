@@ -128,6 +128,10 @@ class ArcadeConfig:
     def appearance(self) -> dict[str, Any]:
         return normalize_appearance(self.raw.get("appearance"))
 
+    @property
+    def library(self) -> dict[str, Any]:
+        return dict(self.raw.get("library") or {})
+
     def source_enabled(self, name: str) -> bool:
         return bool(self.sources.get(name, True))
 
@@ -279,6 +283,30 @@ def normalize_appearance(raw: Any) -> dict[str, Any]:
     }
 
 
+def library_settings(cfg: ArcadeConfig | None = None) -> dict[str, Any]:
+    """Normalized [library] watch settings with sane clamps."""
+    raw = cfg.library if cfg is not None else {}
+    auto = raw.get("auto_watch", True)
+    if isinstance(auto, str):
+        auto = auto.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _num(key: str, default: float, lo: float, hi: float) -> float:
+        try:
+            value = float(raw.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        if value != value:  # NaN
+            value = default
+        return max(lo, min(hi, value))
+
+    return {
+        "auto_watch": bool(auto),
+        "debounce_s": _num("debounce_s", 4.0, 0.5, 60.0),
+        "poll_interval_s": _num("poll_interval_s", 30.0, 5.0, 600.0),
+        "stale_minutes": _num("stale_minutes", 15.0, 0.0, 24 * 60.0),
+    }
+
+
 def config_to_public(cfg: ArcadeConfig) -> dict[str, Any]:
     return {
         "input": cfg.input,
@@ -287,6 +315,7 @@ def config_to_public(cfg: ArcadeConfig) -> dict[str, Any]:
         "sources": cfg.sources,
         "art": cfg.art,
         "appearance": cfg.appearance,
+        "library": cfg.library,
         "bindings": [b.to_dict() for b in cfg.bindings],
         "errors": list(cfg.errors),
     }
