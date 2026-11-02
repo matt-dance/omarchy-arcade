@@ -1,0 +1,68 @@
+#!/usr/bin/python3
+"""Apply or report Hyprland layer blur for Omarchy Arcade."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from arcade.hypr import NAMESPACE, apply_layer_blur, list_layer_namespaces
+
+
+def _add_namespace(parser: argparse.ArgumentParser, *, default: str | None) -> None:
+    # QML builds `apply --namespace matt-dance-arcade` (flag after the
+    # subcommand). Parent-level --namespace alone is rejected by argparse.
+    kwargs: dict = {"help": "WlrLayershell namespace (default: matt-dance-arcade)"}
+    if default is None:
+        kwargs["default"] = argparse.SUPPRESS
+    else:
+        kwargs["default"] = default
+    parser.add_argument("--namespace", **kwargs)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Arcade Hyprland layer blur helper")
+    _add_namespace(parser, default=NAMESPACE)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_apply = sub.add_parser("apply", help="Push layerrules (and enable decoration blur if needed)")
+    _add_namespace(p_apply, default=None)
+    p_apply.add_argument("--off", action="store_true", help="Disable blur for the overlay namespace")
+    p_apply.add_argument(
+        "--restore-decoration",
+        action="store_true",
+        help="Turn decoration.blur back off (only after Arcade enabled it)",
+    )
+    p_status = sub.add_parser("status", help="Print live layer namespaces")
+    _add_namespace(p_status, default=None)
+
+    args = parser.parse_args(argv)
+    namespace = getattr(args, "namespace", NAMESPACE)
+    if args.cmd == "status":
+        data = {
+            "namespace": namespace,
+            "namespaces": list_layer_namespaces(),
+        }
+        print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        return 0
+
+    data = apply_layer_blur(
+        enabled=not args.off,
+        namespace=namespace,
+        restore_decoration=args.restore_decoration,
+    )
+    print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    # Non-zero when frost was requested but is not available so QML can
+    # raise the 0.7 fallback fill instead of staying optimistic.
+    if data.get("wanted") and not data.get("active"):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

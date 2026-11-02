@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .combos import ComboEngine
-from .config import ArcadeConfig, Binding, load_config
+from .config import ArcadeConfig, Binding, config_to_public, load_config
 from .library_watch import LibraryMonitor
 from .linux_input import (
     ABS_HAT0X,
@@ -78,7 +78,7 @@ class ArcadeDaemon:
         self.nav.configure(self.cfg.input)
         self.nav.reset()
         self.library.configure(self.cfg)
-        emit({"t": "config", "ok": not self.cfg.errors, "errors": self.cfg.errors})
+        self._emit_config()
         emit(
             {
                 "t": "watch",
@@ -87,6 +87,15 @@ class ArcadeDaemon:
                 "auto": bool(self.cfg.library.get("auto_watch", True)),
             }
         )
+
+    def _emit_config(self) -> None:
+        pub = config_to_public(self.cfg)
+        emit({
+            "t": "config",
+            "ok": not self.cfg.errors,
+            "errors": self.cfg.errors,
+            "appearance": pub["appearance"],
+        })
 
     def refresh_devices(self) -> None:
         ignore = self.cfg.input.get("ignore_steam_virtual_pad", "auto")
@@ -424,10 +433,7 @@ class ArcadeDaemon:
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "_running", False))
 
         emit({"t": "hello", "version": 1, "pid": os.getpid()})
-        if self.cfg.errors:
-            emit({"t": "config", "ok": False, "errors": self.cfg.errors})
-        else:
-            emit({"t": "config", "ok": True, "errors": []})
+        self._emit_config()
         self._load_library()
         self.refresh_devices()
         self.library.start()
@@ -446,82 +452,89 @@ class ArcadeDaemon:
         buf = ""
         last_device_scan = 0.0
 
-        while self._running:
-            now = time.monotonic()
-            if now - last_device_scan > 2.0:
-                self.refresh_devices()
-                last_device_scan = now
+        try:
+            while self._running:
+                now = time.monotonic()
+                if now - last_device_scan > 2.0:
+                    self.refresh_devices()
+                    last_device_scan = now
 
-            for act in self.engine.tick(now):
-                self._handle_activation(act.binding, act.reason)
+                for act in self.engine.tick(now):
+                    self._handle_activation(act.binding, act.reason)
 
-            repeated = self.nav.tick(now)
-            if repeated:
-                self._emit_nav(repeated, True)
+                repeated = self.nav.tick(now)
+                if repeated:
+                    self._emit_nav(repeated, True)
 
-            changed = self.tracker.poll(now)
-            if changed is not None:
-                emit({"t": "session", **changed.to_dict()})
-                if changed.state in ("exited", "lost"):
-                    self._record_session_end(changed)
-                    self.tracker.clear()
+                changed = self.tracker.poll(now)
+                if changed is not None:
+                    emit({"t": "session", **changed.to_dict()})
+                    if changed.state in ("exited", "lost"):
+                        self._record_session_end(changed)
+                        self.tracker.clear()
 
-            self.library.tick(now)
+                self.library.tick(now)
 
-            deadlines = [
-                d
-                for d in (self.engine.next_deadline(), self.nav.next_deadline(), self.library.next_deadline())
-                if d is not None
-            ]
-            timeout = 0.05
-            if deadlines:
-                timeout = max(0.0, min(timeout, min(deadlines) - now))
+                deadlines = [
+                    d
+                    for d in (self.engine.next_deadline(), self.nav.next_deadline(), self.library.next_deadline())
+                    if d is not None
+                ]
+                timeout = 0.05
+                if deadlines:
+                    timeout = max(0.0, min(timeout, min(deadlines) - now))
 
-            watch_fds = self.library.fds()
-            rlist = list(self._fds.keys()) + [stdin_fd] + watch_fds
-            try:
-                readable, _, _ = select.select(rlist, [], [], timeout)
-            except InterruptedError:
-                continue
-
-            if stdin_fd in readable:
+                watch_fds = self.library.fds()
+                rlist = list(self._fds.keys()) + [stdin_fd] + watch_fds
                 try:
-                    chunk = os.read(stdin_fd, 65536)
-                except BlockingIOError:
-                    chunk = b""
-                if not chunk:
-                    if self.exit_with_stdin:
-                        self._running = False
-                        break
-                else:
-                    buf += chunk.decode("utf-8", errors="replace")
-                    while "\n" in buf:
-                        line, buf = buf.split("\n", 1)
-                        self._handle_stdin_line(line)
+                    readable, _, _ = select.select(rlist, [], [], timeout)
+                except InterruptedError:
+                    continue
 
-            for fd in readable:
-                if fd == stdin_fd:
-                    continue
-                if fd in watch_fds:
-                    self.library.on_readable(fd)
-                    continue
-                info = self._fds.get(fd)
-                if info:
+                if stdin_fd in readable:
                     try:
-                        self._handle_events(fd, info)
-                    except OSError:
-                        try:
-                            os.close(fd)
-                        except OSError:
-                            pass
-                        self._fds.pop(fd, None)
+                        chunk = os.read(stdin_fd, 65536)
+                    except BlockingIOError:
+                        chunk = b""
+                    if not chunk:
+                        if self.exit_with_stdin:
+                            self._running = False
+                            break
+                    else:
+                        buf += chunk.decode("utf-8", errors="replace")
+                        while "\n" in buf:
+                            line, buf = buf.split("\n", 1)
+                            self._handle_stdin_line(line)
 
-        self.library.close()
-        self.keyboard.close()
-        for fd in list(self._fds):
+                for fd in readable:
+                    if fd == stdin_fd:
+                        continue
+                    if fd in watch_fds:
+                        self.library.on_readable(fd)
+                        continue
+                    info = self._fds.get(fd)
+                    if info:
+                        try:
+                            self._handle_events(fd, info)
+                        except OSError:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            self._fds.pop(fd, None)
+        finally:
+            self.library.close()
+            self.keyboard.close()
+            for fd in list(self._fds):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
-                os.close(fd)
-            except OSError:
+                from .hypr import restore_if_saved
+
+                restore_if_saved()
+            except Exception:
                 pass
         return 0
 

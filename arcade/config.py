@@ -125,6 +125,10 @@ class ArcadeConfig:
         return dict(self.raw.get("art") or {})
 
     @property
+    def appearance(self) -> dict[str, Any]:
+        return normalize_appearance(self.raw.get("appearance"))
+
+    @property
     def library(self) -> dict[str, Any]:
         return dict(self.raw.get("library") or {})
 
@@ -236,6 +240,49 @@ def load_config(
     return ArcadeConfig(raw=merged, bindings=bindings, errors=errors)
 
 
+DEFAULT_APPEARANCE = {
+    "background_opacity": 0.4,
+    "blur": True,
+    "dynamic_tint": True,
+    "animations": "full",
+}
+
+ANIMATION_MODES = ("full", "reduced", "off")
+
+
+def normalize_appearance(raw: Any) -> dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+    opacity = src.get("background_opacity", DEFAULT_APPEARANCE["background_opacity"])
+    try:
+        opacity_f = float(opacity)
+    except (TypeError, ValueError):
+        opacity_f = float(DEFAULT_APPEARANCE["background_opacity"])
+    if opacity_f != opacity_f:  # NaN
+        opacity_f = float(DEFAULT_APPEARANCE["background_opacity"])
+    opacity_f = max(0.0, min(1.0, opacity_f))
+
+    animations = str(src.get("animations", DEFAULT_APPEARANCE["animations"]) or "").strip().lower()
+    if animations not in ANIMATION_MODES:
+        animations = str(DEFAULT_APPEARANCE["animations"])
+
+    def _flag(key: str, default: bool) -> bool:
+        value = src.get(key, default)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
+    return {
+        "background_opacity": opacity_f,
+        "blur": _flag("blur", bool(DEFAULT_APPEARANCE["blur"])),
+        "dynamic_tint": _flag("dynamic_tint", bool(DEFAULT_APPEARANCE["dynamic_tint"])),
+        "animations": animations,
+    }
+
+
 def library_settings(cfg: ArcadeConfig | None = None) -> dict[str, Any]:
     """Normalized [library] watch settings with sane clamps."""
     raw = cfg.library if cfg is not None else {}
@@ -267,6 +314,7 @@ def config_to_public(cfg: ArcadeConfig) -> dict[str, Any]:
         "launch": cfg.launch,
         "sources": cfg.sources,
         "art": cfg.art,
+        "appearance": cfg.appearance,
         "library": cfg.library,
         "bindings": [b.to_dict() for b in cfg.bindings],
         "errors": list(cfg.errors),

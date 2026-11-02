@@ -107,6 +107,43 @@ class TestModelState(unittest.TestCase):
         self.assertEqual(run_js('stateFilePath("/home/u", "")'), "/home/u/.local/state/matt-dance.arcade/state.json")
         self.assertEqual(run_js('stateFilePath("/home/u", "/x")'), "/x/matt-dance.arcade/state.json")
 
+    def test_appearance_parse_merge_and_tint(self):
+        parsed = run_js(
+            "parseAppearanceText("
+            + json.dumps(
+                "[ui]\nscale = 1\n\n[appearance]\nbackground_opacity = 0.35\nblur = false\nanimations = \"reduced\"\n"
+            )
+            + ")"
+        )
+        self.assertEqual(parsed["backgroundOpacity"], 0.35)
+        self.assertFalse(parsed["blur"])
+        self.assertTrue(parsed["dynamicTint"])
+        self.assertEqual(parsed["animations"], "reduced")
+        merged = run_js(
+            "mergeAppearance(parseAppearanceText("
+            + json.dumps("[appearance]\nbackground_opacity = 0.4\n")
+            + "), {blur: false, background_opacity: 0.2})"
+        )
+        self.assertEqual(merged["backgroundOpacity"], 0.2)
+        self.assertFalse(merged["blur"])
+        self.assertEqual(run_js('cycleAnimations("full")'), "reduced")
+        self.assertEqual(run_js('cycleAnimations("off")'), "full")
+        self.assertEqual(run_js("nudgeOpacity(0.4, 0.05)"), 0.45)
+        self.assertEqual(run_js("nudgeOpacity(0.02, -0.05)"), 0)
+        self.assertEqual(
+            run_js('tintUrl({art:{hero:"file:///h.png"}}, null)'),
+            "file:///h.png",
+        )
+        self.assertEqual(
+            run_js('tintUrl({art:{cover:"file:///c.png",iconOnly:true}}, {art:{cover:"file:///m.png"}})'),
+            "file:///m.png",
+        )
+        self.assertEqual(run_js("tintUrl({art:{iconOnly:true}}, null)"), "")
+        self.assertEqual(
+            run_js('userConfigFilePath("/home/u", "")'),
+            "/home/u/.config/omarchy/arcade/arcade.toml",
+        )
+
     def test_meta_file_matches_game_id(self):
         self.assertEqual(
             run_js('metaFilePath("/home/u", "/cache", "steam:1328670")'),

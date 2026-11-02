@@ -1,6 +1,7 @@
 # Omarchy Arcade — default settings and controller bindings.
 # User overrides live in ~/.config/omarchy/arcade/arcade.toml and are merged
-# over this file. Edits reload live while arcaded is running.
+# over this file. Edits reload live while arcaded is running
+# (bindings, [appearance], and the rest).
 #
 # Binding syntax matches Omarchy's Hyprland binds: "GUIDE + A", "SELECT + START".
 # Buttons: A B X Y LB RB LT RT LS RS L3 R3 START SELECT GUIDE
@@ -56,6 +57,17 @@ stale_minutes = 15
 
 [art]
 steamgriddb_key_file = "~/.config/omarchy/arcade/steamgriddb.key"
+
+# Overlay look. The fill is the current Omarchy theme background at
+# background_opacity so the wallpaper shows through. blur asks Hyprland
+# to frost that layer (install.sh writes the layerrule). dynamic_tint
+# washes a blurred copy of the focused game's hero into the backdrop.
+# animations: full | reduced | off (also honors the shell reduce-motion hint).
+[appearance]
+background_opacity = 0.4
+blur = true
+dynamic_tint = true
+animations = "full"
 
 [bindings]
 "GUIDE + START" = { action = "arcade.toggle", description = "Arcade" }

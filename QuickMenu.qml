@@ -30,6 +30,7 @@ Item {
   property var confirmItem: null
   property string statusLine: ""
   property bool busy: false
+  property color panelFill: Commons.Color.menu.background
 
   signal dismissed()
   signal keysRequested()
@@ -425,11 +426,12 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
+    surfaceFormat.opaque: false
 
     Rectangle {
       anchors.fill: parent
       anchors.margins: Style.gapsOut
-      color: Commons.Color.menu.background
+      color: root.panelFill
       radius: Style.cornerRadius
       border.color: Commons.Color.menu.border
       border.width: 1

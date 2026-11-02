@@ -31,6 +31,7 @@ Item {
   readonly property string scanBin: root.pluginDir + "/bin/arcade-scan"
   readonly property string artBin: root.pluginDir + "/bin/arcade-art"
   readonly property string metaBin: root.pluginDir + "/bin/arcade-meta"
+  readonly property string hyprBin: root.pluginDir + "/bin/arcade-hypr"
 
   property var games: []
   property var scanErrors: []
@@ -41,6 +42,12 @@ Item {
   property string sessionWindow: ""
   property var pads: []
   property var configErrors: []
+  property var appearance: ({
+    backgroundOpacity: 0.4,
+    blur: true,
+    dynamicTint: true,
+    animations: "full"
+  })
   property bool cheatSheetOpen: false
   property bool daemonReady: false
   property bool quickMenuWanted: false
@@ -348,6 +355,8 @@ Item {
       root.pads = msg.pads || []
     } else if (t === "config") {
       root.configErrors = msg.errors || []
+      if (msg.appearance)
+        root.appearance = Model.appearanceFromAny(msg.appearance)
     } else if (t === "nav") {
       root.nav(msg.dir || "", !!msg.repeat)
     } else if (t === "intent") {
@@ -446,6 +455,11 @@ Item {
     userConfigProbe.running = true
   }
 
+  Component.onDestruction: {
+    restoreHypr.command = root.pythonCmd(root.hyprBin, ["apply", "--off"])
+    restoreHypr.running = true
+  }
+
   onManifestChanged: {
     root.log("manifest attached id=" + Model.pluginId(root.manifest))
     root.startDaemon()
@@ -464,7 +478,7 @@ Item {
     interval: 300
     repeat: false
     onTriggered: {
-      root.log("arcade.toml changed — reloading bindings")
+      root.log("arcade.toml changed — reloading bindings and appearance")
       root.sendDaemon({ t: "reload" })
       if (!userConfigProbe.running)
         userConfigProbe.running = true
@@ -512,6 +526,7 @@ Item {
 
   Process { id: notifyProcess }
   Process { id: inhibitProcess }
+  Process { id: restoreHypr }
 
   Process {
     id: scanProcess
