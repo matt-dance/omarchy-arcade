@@ -203,4 +203,4 @@ than `stale_minutes`. The existing `Service.qml` `rescan()` path writes
 the library; favorites and play history stay in `state.json`. `[library]`
 in `arcade.toml` can turn watching off or set the poll interval.
 
-**Status: Done (this PR).**
+**Status: Done in [#10](https://github.com/matt-dance/omarchy-arcade/pull/10) (auto library watch).**
