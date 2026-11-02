@@ -129,7 +129,9 @@ class TestMetaFilename(unittest.TestCase):
         self.assertIn('"/meta/" + stem + ".json"', js)
         qml = (ROOT / "Arcade.qml").read_text(encoding="utf-8")
         self.assertIn("function metaFilePath", js)
+        self.assertIn("function metaMatchesGame", js)
         self.assertIn("root.focusedGame ? root.focusedGame.id", qml)
+        self.assertIn("Model.metaMatchesGame", qml)
         self.assertIn("applyMetaStdout", qml)
 
 

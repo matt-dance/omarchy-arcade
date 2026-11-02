@@ -204,3 +204,27 @@ the library; favorites and play history stay in `state.json`. `[library]`
 in `arcade.toml` can turn watching off or set the poll interval.
 
 **Status: Done in [#10](https://github.com/matt-dance/omarchy-arcade/pull/10) (auto library watch).**
+
+## 12. GFN add via GeForce NOW Menu does not trigger a watch rescan (bug)
+
+**Problem.** On hardware, adding World of Warcraft from GeForce NOW Menu at
+19:14:13 wrote `~/.local/share/applications/gfn-108815277.desktop` and
+modified `~/.config/omarchy/extensions/omarchy-menu.jsonc`. `arcaded` was
+running in watch mode, but no `daemon requested rescan reason=watch`
+fired and `library.json` stayed at its 19:11 write. A plain
+`Categories=Game` `.desktop` in the same applications dir *did* rescan,
+so the dir was watched. The GFN writer uses a hidden `.gfn-write.*`
+subdir then `mv`s into place, and also rewrites plugin `games.json` /
+`omarchy-menu.jsonc` — those extra sources were not in the watch set.
+
+**Change.** Every scanner publishes `watch_paths()`. The watcher covers
+those inputs (including GFN plugin data, `omarchy/extensions/`, and
+`omarchy-menu.jsonc`), watches parent dirs so atomic replace is visible,
+name-filters wide ancestors like `~/.local/share`, and treats
+`gfn-*.desktop` / `.gfn-write.*` as interesting. A test asserts every
+scanner input is in the watch set. Overlay `loadMetaFromDisk` only
+applies FileView JSON when `parsed.id` matches the focused game (the
+`meta loaded id=… file=…` mismatch was a stale-FileView race, not a
+wrong cache file).
+
+**Status: Done in [#12](https://github.com/matt-dance/omarchy-arcade/pull/12) (GFN watch + meta FileView race).**

@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
-from ..paths import bottles_data_dirs
+from ..paths import bottles_data_dirs, home, xdg_data_home
 
 
 def _parse_simple_yaml_programs(text: str) -> list[dict[str, str]]:
@@ -57,6 +57,27 @@ def _parse_simple_yaml_programs(text: str) -> list[dict[str, str]]:
     if current and current.get("name"):
         programs.append(current)
     return programs
+
+
+def watch_paths() -> list[Path]:
+    paths: list[Path] = [
+        xdg_data_home() / "bottles",
+        home() / ".var" / "app" / "com.usebottles.bottles" / "data" / "bottles",
+    ]
+    for data_dir in bottles_data_dirs():
+        paths.append(data_dir)
+        bottles_root = data_dir / "bottles"
+        paths.append(bottles_root)
+        if bottles_root.is_dir():
+            try:
+                children = list(bottles_root.iterdir())
+            except OSError:
+                children = []
+            for bottle in children:
+                if bottle.is_dir():
+                    paths.append(bottle)
+                    paths.append(bottle / "bottle.yml")
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

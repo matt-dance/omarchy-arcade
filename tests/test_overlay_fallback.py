@@ -98,6 +98,8 @@ class TestOverlayAndServiceSources(unittest.TestCase):
         self.assertIn("PreserveAspectCrop", qml)
         self.assertIn("function metaFilePath", js)
         self.assertIn("function parseMetaText", js)
+        self.assertIn("function metaMatchesGame", js)
+        self.assertIn("Model.metaMatchesGame", qml)
         self.assertIn("function metaIsFresh", js)
         self.assertIn("function factsLine", js)
         self.assertIn("function protonLabel", js)

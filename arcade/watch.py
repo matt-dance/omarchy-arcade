@@ -34,6 +34,7 @@ IN_DELETE_SELF = 0x00000400
 IN_MOVE_SELF = 0x00000800
 IN_Q_OVERFLOW = 0x00004000
 IN_IGNORED = 0x00008000
+IN_ISDIR = 0x40000000
 IN_NONBLOCK = 0x00000800
 IN_CLOEXEC = 0x00080000
 IN_WATCH_MASK = (
@@ -208,6 +209,42 @@ class InotifyWatcher(FileWatcher):
         self._rm_watch = rm_watch
         self._wd_to_path: dict[int, Path] = {}
         self._path_to_wd: dict[Path, int] = {}
+        self._ephemeral: set[Path] = set()
+
+    def _key(self, directory: Path) -> Path:
+        try:
+            return directory.resolve()
+        except OSError:
+            return directory
+
+    def _watch_one(self, directory: Path, *, ephemeral: bool = False) -> bool:
+        try:
+            if not directory.is_dir():
+                return False
+        except OSError:
+            return False
+        key = self._key(directory)
+        if key in self._path_to_wd:
+            return False
+        wd = self._add_watch(self.fd, os.fsencode(directory), IN_WATCH_MASK)
+        if wd < 0:
+            return False
+        self._path_to_wd[key] = wd
+        self._wd_to_path[wd] = directory
+        if ephemeral:
+            self._ephemeral.add(key)
+        return True
+
+    def _drop_key(self, key: Path) -> None:
+        wd = self._path_to_wd.pop(key, None)
+        self._ephemeral.discard(key)
+        if wd is None:
+            return
+        self._wd_to_path.pop(wd, None)
+        try:
+            self._rm_watch(self.fd, wd)
+        except OSError:
+            pass
 
     def set_paths(self, paths: Iterable[Path]) -> bool:
         wanted: dict[Path, Path] = {}
@@ -215,30 +252,20 @@ class InotifyWatcher(FileWatcher):
             directory = watch_dir_for(Path(raw))
             if directory is None:
                 continue
-            try:
-                key = directory.resolve()
-            except OSError:
-                key = directory
-            wanted[key] = directory
+            wanted[self._key(directory)] = directory
         current = set(self._path_to_wd)
+        # Keep ephemeral child watches that still sit under a wanted dir.
+        keep_ephemeral: set[Path] = set()
+        for key in self._ephemeral:
+            if any(key == parent or parent in key.parents for parent in wanted):
+                keep_ephemeral.add(key)
+                wanted.setdefault(key, self._wd_to_path.get(self._path_to_wd.get(key, -1), key))
         changed = current != set(wanted)
         for key in current - set(wanted):
-            wd = self._path_to_wd.pop(key, None)
-            if wd is None:
-                continue
-            self._wd_to_path.pop(wd, None)
-            try:
-                self._rm_watch(self.fd, wd)
-            except OSError:
-                pass
+            self._drop_key(key)
+        self._ephemeral = keep_ephemeral & set(self._path_to_wd)
         for key, directory in wanted.items():
-            if key in self._path_to_wd:
-                continue
-            wd = self._add_watch(self.fd, os.fsencode(directory), IN_WATCH_MASK)
-            if wd < 0:
-                continue
-            self._path_to_wd[key] = wd
-            self._wd_to_path[wd] = directory
+            self._watch_one(directory, ephemeral=key in keep_ephemeral)
         return changed
 
     def read(self) -> list[tuple[Path | None, str]]:
@@ -268,11 +295,17 @@ class InotifyWatcher(FileWatcher):
                 if mask & IN_IGNORED:
                     if wd in self._wd_to_path:
                         gone = self._wd_to_path.pop(wd)
-                        try:
-                            self._path_to_wd.pop(gone.resolve(), None)
-                        except OSError:
-                            self._path_to_wd.pop(gone, None)
+                        key = self._key(gone)
+                        self._path_to_wd.pop(key, None)
+                        self._ephemeral.discard(key)
                     continue
+                # GFN write-desktop-entry.sh writes into a hidden
+                # applications/.gfn-write.* dir, then mv's the file up.
+                # Watch that child so the write is visible, not only the mv.
+                if path is not None and name and (mask & IN_CREATE) and (mask & IN_ISDIR):
+                    self._watch_one(path / name, ephemeral=True)
+                if path is not None and name and (mask & (IN_DELETE | IN_MOVED_FROM)) and (mask & IN_ISDIR):
+                    self._drop_key(self._key(path / name))
                 events.append((path, name))
         return events
 
@@ -286,6 +319,7 @@ class InotifyWatcher(FileWatcher):
         self.fd = None
         self._wd_to_path.clear()
         self._path_to_wd.clear()
+        self._ephemeral.clear()
 
 
 class _PipeWakeWatcher(FileWatcher):

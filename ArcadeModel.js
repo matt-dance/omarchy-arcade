@@ -601,6 +601,12 @@ function parseMetaText(text) {
   }
 }
 
+function metaMatchesGame(meta, gameId) {
+  if (!meta || !meta.id || !gameId)
+    return false
+  return String(meta.id) === String(gameId)
+}
+
 function metaIsFresh(meta) {
   if (!meta || !meta.fetchedAt) return false
   var fetched = Date.parse(meta.fetchedAt)

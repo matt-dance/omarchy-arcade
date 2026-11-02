@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from ..model import ArtSpec, Game, LaunchSpec, ScanError, TrackSpec, normalize_title
-from ..paths import itch_db_paths
+from ..paths import home, itch_db_paths, xdg_config_home
+
+
+def watch_paths() -> list[Path]:
+    paths: list[Path] = [
+        xdg_config_home() / "itch" / "db",
+        xdg_config_home() / "itch" / "db" / "butler.db",
+        home() / ".var" / "app" / "io.itch.itch" / "config" / "itch" / "db",
+        home() / ".var" / "app" / "io.itch.itch" / "config" / "itch" / "db" / "butler.db",
+    ]
+    paths.extend(itch_db_paths())
+    return paths
 
 
 def scan() -> tuple[list[Game], list[ScanError]]:

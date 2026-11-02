@@ -153,6 +153,39 @@ def legendary_installed() -> list[Path]:
     return [p for p in candidates if p.is_file()]
 
 
+GFN_PLUGIN_IDS = ("matt-dance.gfn-omarchy", "matt-dance.gfn")
+
+
+def application_dir_candidates() -> list[Path]:
+    """Application dirs the desktop scanner reads, including ones not created yet."""
+    dirs = [xdg_data_home() / "applications"]
+    for d in xdg_data_dirs():
+        dirs.append(d / "applications")
+    return dirs
+
+
+def gfn_plugin_paths() -> list[Path]:
+    """GeForce NOW Menu plugin state, cache, and Omarchy menu block.
+
+    ``write-desktop-entry.sh`` writes ``gfn-*.desktop`` under applications/
+    via a hidden ``.gfn-write.*`` subdir, then records
+    ``$XDG_DATA_HOME/matt-dance.gfn-omarchy/games.json`` and rewrites the
+    ``gfn-games`` block in ``omarchy-menu.jsonc``.
+    """
+    out: list[Path] = []
+    for plugin_id in GFN_PLUGIN_IDS:
+        out.append(xdg_data_home() / plugin_id)
+        out.append(xdg_data_home() / plugin_id / "games.json")
+        out.append(xdg_config_home() / plugin_id)
+        out.append(xdg_cache_home() / plugin_id)
+        out.append(xdg_state_home() / plugin_id)
+        out.append(xdg_config_home() / "omarchy" / "plugins" / plugin_id)
+    out.append(xdg_data_home() / "icons" / "gfn")
+    out.append(xdg_config_home() / "omarchy" / "extensions")
+    out.append(xdg_config_home() / "omarchy" / "extensions" / "omarchy-menu.jsonc")
+    return out
+
+
 def application_dirs() -> list[Path]:
     dirs = [xdg_data_home() / "applications"]
     for d in xdg_data_dirs():
